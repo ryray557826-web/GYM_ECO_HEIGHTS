@@ -7,6 +7,10 @@
            class="py-3 {{ request()->routeIs('owner.checkin*') ? 'text-[#76c800] border-b-2 border-[#76c800]' : 'text-gray-400 hover:text-gray-200 border-b-2 border-transparent' }}">
             Check-In
         </a>
+        <a href="{{ route('owner.attendance.index') }}" 
+           class="py-3 {{ request()->routeIs('owner.attendance*') ? 'text-[#76c800] border-b-2 border-[#76c800]' : 'text-gray-400 hover:text-gray-200 border-b-2 border-transparent' }}">
+            Attendance
+        </a>
         <a href="{{ route('owner.members.index') }}" 
            class="py-3 {{ request()->routeIs('owner.members*') ? 'text-[#76c800] border-b-2 border-[#76c800]' : 'text-gray-400 hover:text-gray-200 border-b-2 border-transparent' }}">
             Members

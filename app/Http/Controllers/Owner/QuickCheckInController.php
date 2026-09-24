@@ -44,27 +44,26 @@ class QuickCheckInController extends Controller
                 'name' => $member->customer->full_name,
                 'contact' => $member->customer->contact_number ?? 'No contact provided',
                 'has_active_monthly' => $isMonthlyActive,
+                'reward_points' => $member->reward_points ?? 0,
                 'plan_type' => $subscription && $subscription->package ? $subscription->package->name : 'Walk-In',
                 'expires_at' => $subscription ? Carbon::parse($subscription->end_time)->format('Y-m-d H:i') : 'N/A',
                 'status' => $isMonthlyActive ? 'ACTIVE' : ($subscription && $subscription->status === 'expired' ? 'EXPIRED' : 'NO PLAN')
             ]
         ]);
     }
-
+// Confirm ₱50 Paid Entry + Award 3 Points
     public function confirmPerSession(Request $request)
     {
         $request->validate(['member_id' => 'required|exists:members,id']);
 
         return DB::transaction(function () use ($request) {
             $member = Member::with('customer')->findOrFail($request->member_id);
-            $cashMethod = PaymentMethod::firstOrCreate(['code' => 'cash'], ['name' => 'Physical Cash']);
+            $cashMethod = PaymentMethod::firstOrCreate(['code' => 'cash'], ['name' => 'Physical / Walk-In']);
             $today = Carbon::today()->toDateString();
             $now = Carbon::now()->toTimeString();
 
-            // 1. Record verified payment
-            $paymentCode = 'PAY-' . Carbon::now()->format('YmdHis');
             $payment = Payment::create([
-                'payment_code' => $paymentCode,
+                'payment_code' => 'PAY-' . Carbon::now()->format('YmdHis'),
                 'customer_id' => $member->customer_id,
                 'member_id' => $member->id,
                 'payment_method_id' => $cashMethod->id,
@@ -75,7 +74,6 @@ class QuickCheckInController extends Controller
                 'verified_by' => auth()->id()
             ]);
 
-            // 2. Recognize Revenue
             Revenue::create([
                 'revenue_code' => 'REV-' . $payment->id,
                 'payment_id' => $payment->id,
@@ -83,7 +81,6 @@ class QuickCheckInController extends Controller
                 'revenue_date' => $today
             ]);
 
-            // 3. Log Attendance
             Attendance::create([
                 'customer_id' => $member->customer_id,
                 'member_id' => $member->id,
@@ -93,11 +90,13 @@ class QuickCheckInController extends Controller
                 'entry_type' => 'per_session'
             ]);
 
-            // 4. Audit Log
+            // Daily payment awards 3 points
+            $member->increment('reward_points', 3);
+
             AuditLog::create([
                 'log_code' => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
                 'user_id' => auth()->id(),
-                'action' => "Daily Access Granted (₱50) for {$member->customer->full_name}",
+                'action' => "Daily Payment (₱50) & +3 Points awarded to {$member->customer->full_name}",
                 'entity_type' => Member::class,
                 'entity_id' => $member->id,
                 'validity_period' => '24 Hours',
@@ -106,7 +105,7 @@ class QuickCheckInController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => "₱50 Per-Session entry confirmed and logged for {$member->customer->full_name}."
+                'message' => "₱50 Entry recorded & 3 Points awarded to {$member->customer->full_name}!"
             ]);
         });
     }

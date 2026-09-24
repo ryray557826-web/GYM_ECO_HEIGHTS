@@ -49,7 +49,7 @@
     </nav>
 
     <!-- Main Content Yield -->
-    <main class="flex-1 p-6 max-w-7xl w-full mx-auto">
+<main class="flex-1 px-4 sm:px-8 lg:px-12 py-8 max-w-[96%] xl:max-w-[1600px] 2xl:max-w-[1850px] w-full mx-auto">
         @yield('content')
     </main>
 
