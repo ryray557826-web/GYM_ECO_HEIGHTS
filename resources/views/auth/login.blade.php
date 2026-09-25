@@ -51,20 +51,21 @@
                 <label id="identifier_label" class="block text-xs font-bold text-sky-400 font-mono tracking-wider mb-1.5">
                     MEMBER ID <span class="text-[#76c800]">*</span>
                 </label>
-                <input type="text" name="identifier" id="identifier" value="ECO-001" required
+                <input type="text" name="identifier" id="identifier" value="{{ old('identifier') }}" required
                     class="w-full bg-[#080d1a] border border-[#1f293d] rounded-lg px-4 py-2.5 text-gray-100 text-sm focus:outline-none focus:border-[#76c800] font-mono uppercase" 
-                    placeholder="ECO-001">
+                    placeholder="e.g. ECO-001">
             </div>
 
             <div>
                 <label class="block text-xs font-bold text-sky-400 font-mono tracking-wider mb-1.5">
                     PASSWORD <span class="text-[#76c800]">*</span>
                 </label>
-                <input type="password" name="password" id="password" value="pass123" required
-                    class="w-full bg-[#080d1a] border border-[#1f293d] rounded-lg px-4 py-2.5 text-gray-100 text-sm focus:outline-none focus:border-[#76c800]">
+                <input type="password" name="password" id="password" required
+                    class="w-full bg-[#080d1a] border border-[#1f293d] rounded-lg px-4 py-2.5 text-gray-100 text-sm focus:outline-none focus:border-[#76c800]"
+                    placeholder="Enter your password">
             </div>
 
-            <!-- Remember Me Checkbox (Inside the card above Sign In) -->
+            <!-- Remember Me Checkbox -->
             <div class="flex items-center space-x-2 pt-1">
                 <input type="checkbox" name="remember" id="remember" value="1" checked 
                     class="w-4 h-4 rounded bg-[#080d1a] border border-[#1f293d] text-[#76c800] focus:ring-0 focus:ring-offset-0 cursor-pointer">
@@ -72,10 +73,6 @@
                     Remember me on this device
                 </label>
             </div>
-
-            <p class="text-xs text-gray-400 pt-1" id="demo_helper">
-                Demo: ID <span class="text-[#76c800] font-mono font-bold">ECO-001</span>, password <span class="text-[#76c800] font-bold">pass123</span>
-            </p>
 
             <button type="submit" 
                 class="w-full py-3 bg-[#76c800] hover:bg-[#68b000] text-black font-extrabold text-sm rounded-lg transition font-heading tracking-wider shadow-lg shadow-[#76c800]/10">
@@ -95,22 +92,19 @@
         const tabOwner = document.getElementById('tabOwner');
         const label = document.getElementById('identifier_label');
         const input = document.getElementById('identifier');
-        const helper = document.getElementById('demo_helper');
 
         if(role === 'member') {
             tabMember.className = "py-2 text-xs font-bold rounded-md bg-[#76c800] text-black transition";
             tabOwner.className = "py-2 text-xs font-bold text-gray-400 hover:text-white transition";
             label.innerHTML = 'MEMBER ID <span class="text-[#76c800]">*</span>';
-            input.placeholder = "ECO-001";
-            input.value = "ECO-001";
-            helper.innerHTML = 'Demo: ID <span class="text-[#76c800] font-mono font-bold">ECO-001</span>, password <span class="text-[#76c800] font-bold">pass123</span>';
+            input.placeholder = "e.g. ECO-001";
+            input.value = "";
         } else {
             tabOwner.className = "py-2 text-xs font-bold rounded-md bg-[#76c800] text-black transition";
             tabMember.className = "py-2 text-xs font-bold text-gray-400 hover:text-white transition";
             label.innerHTML = 'OWNER EMAIL <span class="text-[#76c800]">*</span>';
-            input.placeholder = "owner@ecoheights.com";
-            input.value = "owner@ecoheights.com";
-            helper.innerHTML = 'Demo: Owner <span class="text-[#76c800] font-bold">owner@ecoheights.com</span>, password <span class="text-[#76c800] font-bold">pass123</span>';
+            input.placeholder = "e.g. owner@ecoheights.com";
+            input.value = "";
         }
     }
     </script>
