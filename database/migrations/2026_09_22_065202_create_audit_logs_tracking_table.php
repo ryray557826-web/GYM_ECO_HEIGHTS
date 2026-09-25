@@ -9,14 +9,14 @@ return new class extends Migration {
     {
         Schema::create('audit_logs', function (Blueprint $table) {
             $table->id();
-            $table->string('log_code', 30)->unique(); // AUD-001
+            $table->string('log_code', 30)->unique();
             $table->foreignId('user_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->string('action', 150);            // Membership Renewed, Status Override, Payment Approved
-            $table->string('entity_type', 100);       // App\Models\Member, App\Models\Payment
+            $table->string('action', 150);
+            $table->string('entity_type', 100)->nullable();
             $table->unsignedBigInteger('entity_id')->nullable();
-            $table->json('old_values')->nullable();   // Tracks what changed
+            $table->json('old_values')->nullable();
             $table->json('new_values')->nullable();
-            $table->string('validity_period', 50)->nullable(); // 1 Month, 24 Hours
+            $table->string('validity_period', 50)->nullable();
             $table->string('performed_by', 100)->default('Owner');
             $table->string('ip_address', 45)->nullable();
             $table->timestamps();

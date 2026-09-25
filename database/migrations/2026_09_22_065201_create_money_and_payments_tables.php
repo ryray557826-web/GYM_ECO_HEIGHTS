@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        // 1. Payment Methods (Cash, GCash, Maya, Bank Transfer)
+        // 1. Payment Methods
         Schema::create('payment_methods', function (Blueprint $table) {
             $table->id();
             $table->string('code', 30)->unique();
@@ -17,10 +17,10 @@ return new class extends Migration {
             $table->timestamps();
         });
 
-        // 2. Payments Table (Transaction layer for customers & members)
+        // 2. Payments Table
         Schema::create('payments', function (Blueprint $table) {
             $table->id();
-            $table->string('payment_code', 30)->unique(); // PAY-001
+            $table->string('payment_code', 30)->unique();
             $table->foreignId('customer_id')->constrained('customers')->cascadeOnDelete();
             $table->foreignId('member_id')->nullable()->constrained('members')->nullOnDelete();
             $table->foreignId('member_subscription_id')->nullable()->constrained('member_subscriptions')->nullOnDelete();

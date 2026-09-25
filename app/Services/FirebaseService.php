@@ -17,7 +17,6 @@ class FirebaseService
 
         if (file_exists($credPath)) {
             $this->credentials = json_decode(file_get_contents($credPath), true);
-            // Automatically read the exact project_id from the JSON file!
             $this->projectId = $this->credentials['project_id'] ?? env('FIREBASE_PROJECT_ID', 'eco-heights-gym-c200d');
         } else {
             $this->projectId = env('FIREBASE_PROJECT_ID', 'eco-heights-gym-c200d');
@@ -27,7 +26,7 @@ class FirebaseService
     }
 
     /**
-     * Generate an OAuth2 Bearer Token using your service account private key (Zero extra packages required)
+     * Generate an OAuth2 Bearer Token using your service account private key
      */
     protected function getAccessToken(): ?string
     {
@@ -60,9 +59,6 @@ class FirebaseService
         });
     }
 
-    /**
-     * HTTP Client with Google Bearer Token
-     */
     protected function client()
     {
         $token = $this->getAccessToken();
@@ -70,16 +66,20 @@ class FirebaseService
     }
 
     /**
-     * Convert PHP Array to Firestore Typed Fields
+     * Convert standard PHP array to Firestore Typed Fields
      */
-    protected function formatFields(array $data): array
+    public function formatFields(array $data): array
     {
         $fields = [];
         foreach ($data as $key => $value) {
-            if (is_int($value) || (is_numeric($value) && !is_float($value))) {
-                $fields[$key] = ['integerValue' => (string) $value];
+            if (is_null($value)) {
+                $fields[$key] = ['nullValue' => null];
             } elseif (is_bool($value)) {
                 $fields[$key] = ['booleanValue' => $value];
+            } elseif (is_int($value)) {
+                $fields[$key] = ['integerValue' => (string) $value];
+            } elseif (is_float($value) || (is_numeric($value) && strpos((string)$value, '.') !== false)) {
+                $fields[$key] = ['doubleValue' => (float) $value];
             } else {
                 $fields[$key] = ['stringValue' => (string) $value];
             }
@@ -88,80 +88,35 @@ class FirebaseService
     }
 
     /**
-     * Sync or Add a Member to Firestore
+     * Set a Document in a Collection with a custom ID
      */
+    public function setDocument(string $collection, string $docId, array $data)
+    {
+        $url = "{$this->baseUrl}/{$collection}/{$docId}";
+        $payload = $this->formatFields($data);
+        return $this->client()->patch($url, $payload)->json();
+    }
+
+    /**
+     * Add a Document in a Collection with an auto-generated ID
+     */
+    public function addDocument(string $collection, array $data)
+    {
+        $url = "{$this->baseUrl}/{$collection}";
+        $payload = $this->formatFields($data);
+        return $this->client()->post($url, $payload)->json();
+    }
+
     public function syncMember(array $memberData)
     {
-        $docId = $memberData['member_code'];
-        $url = "{$this->baseUrl}/members/{$docId}";
-
-        $payload = $this->formatFields([
+        return $this->setDocument('members', $memberData['member_code'], [
             'member_code'       => $memberData['member_code'],
             'name'              => $memberData['name'],
             'email'             => $memberData['email'] ?? '',
             'contact_number'    => $memberData['contact_number'] ?? '',
             'membership_status' => $memberData['status'] ?? 'active',
-            'reward_points'     => $memberData['reward_points'] ?? 0,
+            'reward_points'     => (int) ($memberData['reward_points'] ?? 0),
             'updated_at'        => now()->toDateTimeString(),
         ]);
-
-        return $this->client()->patch($url, $payload)->json();
-    }
-
-    /**
-     * Log a Real-time Attendance Entry
-     */
-    public function logAttendance(array $attendanceData)
-    {
-        $url = "{$this->baseUrl}/attendances";
-
-        $payload = $this->formatFields([
-            'member_code'     => $attendanceData['member_code'] ?? 'WALK-IN',
-            'customer_name'   => $attendanceData['customer_name'] ?? 'Visitor',
-            'entry_type'      => $attendanceData['entry_type'] ?? 'per_session',
-            'attendance_date' => $attendanceData['attendance_date'] ?? date('Y-m-d'),
-            'check_in_time'   => $attendanceData['check_in_time'] ?? date('H:i:s'),
-        ]);
-
-        return $this->client()->post($url, $payload)->json();
-    }
-
-    /**
-     * Publish an Announcement to Firestore
-     */
-    public function publishAnnouncement(array $data)
-    {
-        $url = "{$this->baseUrl}/announcements";
-
-        $payload = $this->formatFields([
-            'title'       => $data['title'],
-            'badge'       => $data['badge'] ?? 'INFO',
-            'message'     => $data['message'],
-            'posted_date' => date('Y-m-d'),
-        ]);
-
-        return $this->client()->post($url, $payload)->json();
-    }
-
-    /**
-     * Fetch all Members from Firestore
-     */
-    public function getMembers(): array
-    {
-        $response = $this->client()->get("{$this->baseUrl}/members");
-        $documents = $response->json('documents') ?? [];
-
-        $members = [];
-        foreach ($documents as $doc) {
-            $fields = $doc['fields'] ?? [];
-            $members[] = [
-                'member_code'   => $fields['member_code']['stringValue'] ?? '',
-                'name'          => $fields['name']['stringValue'] ?? '',
-                'reward_points' => $fields['reward_points']['integerValue'] ?? 0,
-                'status'        => $fields['membership_status']['stringValue'] ?? 'active',
-            ];
-        }
-
-        return $members;
     }
 }

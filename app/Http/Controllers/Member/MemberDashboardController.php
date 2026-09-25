@@ -39,9 +39,10 @@ class MemberDashboardController extends Controller
 
         if (!$member) {
             Auth::logout();
-            return redirect()->route('login')->withErrors(['identifier' => 'No active member profile linked.']);
+            return redirect()->route('login')->withErrors(['identifier' => 'No active member profile linked to this user.']);
         }
 
+        // Load all relations for the member dashboard
         $member->load([
             'customer',
             'latestSubscription.package',
@@ -50,12 +51,46 @@ class MemberDashboardController extends Controller
             'gymNotes'
         ]);
 
+        // =========================================================================
+        // AUTOMATIC REWARD POINTS RECONCILIATION
+        // Points schedule: Daily = 3 pts, Monthly = 15 pts, Quarterly = 45 pts, Yearly = 180 pts
+        // =========================================================================
+        $earnedPoints = 0;
+        foreach ($member->payments->where('status', 'verified') as $pay) {
+            if ($pay->payment_type === 'monthly_subscription' || $pay->amount >= 700) {
+                $days = ($pay->subscription && $pay->subscription->package) ? $pay->subscription->package->duration_in_days : 30;
+                if ($days >= 365 || $pay->amount >= 7000) {
+                    $earnedPoints += 180; // Yearly
+                } elseif ($days >= 90 || $pay->amount >= 2000) {
+                    $earnedPoints += 45;  // Quarterly
+                } else {
+                    $earnedPoints += 15;  // Monthly
+                }
+            } else {
+                $earnedPoints += 3;       // Daily per-session
+            }
+        }
+
+        // Deduct points if any 500-pt reward was already redeemed
+        $redeemedCount = AuditLog::where('user_id', $user->id)
+            ->where('action', 'like', '%Reward Points Redeemed%')
+            ->count();
+
+        $calculatedPoints = max(0, $earnedPoints - ($redeemedCount * 500));
+
+        // Sync points in database if different
+        if ($member->reward_points !== $calculatedPoints) {
+            $member->update(['reward_points' => $calculatedPoints]);
+            $member->reward_points = $calculatedPoints;
+        }
+
         $packages = Package::where('is_active', true)->get();
         $paymentMethods = PaymentMethod::all();
 
         return view('member.overview', compact('member', 'packages', 'paymentMethods'));
     }
-// Redeem 500 Points for 1 Month Free Access
+
+    // Redeem 500 Points for 1 Month Free Access
     public function redeemPoints(Request $request)
     {
         $user = Auth::user();
@@ -66,16 +101,13 @@ class MemberDashboardController extends Controller
         }
 
         DB::transaction(function () use ($member, $user) {
-            // 1. Deduct 500 points
             $member->decrement('reward_points', 500);
 
-            // 2. Fetch or create Monthly Package
             $pkg = Package::firstOrCreate(
                 ['plan_type' => 'monthly'],
                 ['package_code' => 'PKG-MTH-750', 'name' => 'Monthly Free Reward Pass', 'price' => 750, 'duration_in_days' => 30]
             );
 
-            // 3. Extend or activate subscription by 30 days
             $currentSub = $member->latestSubscription;
             $newStart = ($currentSub && $currentSub->status === 'active' && Carbon::parse($currentSub->end_time)->isFuture())
                 ? Carbon::parse($currentSub->end_time)
@@ -84,23 +116,23 @@ class MemberDashboardController extends Controller
             $newEnd = (clone $newStart)->addDays(30);
 
             MemberSubscription::create([
-                'member_id' => $member->id,
+                'member_id'  => $member->id,
                 'package_id' => $pkg->id,
                 'start_time' => $newStart,
-                'end_time' => $newEnd,
-                'status' => 'active'
+                'end_time'   => $newEnd,
+                'status'     => 'active'
             ]);
 
             $member->update(['membership_status' => 'active']);
 
             AuditLog::create([
-                'log_code' => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
-                'user_id' => $user->id,
-                'action' => "Reward Points Redeemed: 500 Points for 1 Month Free Gym Access",
-                'entity_type' => Member::class,
-                'entity_id' => $member->id,
+                'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                'user_id'         => $user->id,
+                'action'          => "Reward Points Redeemed: 500 Points for 1 Month Free Gym Access",
+                'entity_type'     => Member::class,
+                'entity_id'       => $member->id,
                 'validity_period' => '1 Month (Free Reward)',
-                'performed_by' => 'Member Self-Redeem'
+                'performed_by'    => 'Member Self-Redeem'
             ]);
         });
 

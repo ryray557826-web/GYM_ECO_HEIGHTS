@@ -7,19 +7,19 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        // 1. Packages Catalog (Monthly ₱750, Daily ₱50, Promos)
+        // 1. Packages Catalog
         Schema::create('packages', function (Blueprint $table) {
             $table->id();
-            $table->string('package_code', 30)->unique(); // PKG-MTH-750, PKG-DAY-050
+            $table->string('package_code', 30)->unique();
             $table->string('name', 100);
-            $table->enum('plan_type', ['monthly', 'daily', 'annual', 'special_promo'])->default('monthly');
+            $table->string('plan_type', 50)->default('monthly'); // Supports monthly, quarterly, yearly, daily
             $table->decimal('price', 10, 2);
             $table->unsignedInteger('duration_in_days');
             $table->boolean('is_active')->default(true);
             $table->timestamps();
         });
 
-        // 2. Package Features (3NF: Amenities included per package)
+        // 2. Package Features
         Schema::create('package_features', function (Blueprint $table) {
             $table->id();
             $table->foreignId('package_id')->constrained('packages')->cascadeOnDelete();
@@ -27,7 +27,7 @@ return new class extends Migration {
             $table->timestamps();
         });
 
-        // 3. Member Subscriptions (Links Members to Packages)
+        // 3. Member Subscriptions
         Schema::create('member_subscriptions', function (Blueprint $table) {
             $table->id();
             $table->foreignId('member_id')->constrained('members')->cascadeOnDelete();

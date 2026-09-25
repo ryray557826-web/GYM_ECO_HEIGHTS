@@ -12,7 +12,7 @@ use App\Models\PaymentMethod;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-
+    
 class QuickCheckInController extends Controller
 {
     public function search(Request $request)

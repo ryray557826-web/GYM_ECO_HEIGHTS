@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        // 1. Equipment Categories (Free Weights, Cardio, Machines, Racks)
+        // 1. Equipment Categories
         Schema::create('equipment_categories', function (Blueprint $table) {
             $table->id();
             $table->string('category_code', 30)->unique();
@@ -16,25 +16,25 @@ return new class extends Migration {
             $table->timestamps();
         });
 
-        // 2. Gym Equipment
+        // 2. Gym Equipment Inventory
         Schema::create('equipment', function (Blueprint $table) {
             $table->id();
-            $table->string('equipment_code', 30)->unique(); // EQP-001
+            $table->string('equipment_code', 30)->unique();
             $table->foreignId('category_id')->constrained('equipment_categories')->restrictOnDelete();
             $table->string('name', 150);
             $table->string('brand', 100)->nullable();
             $table->unsignedInteger('quantity')->default(1);
-            $table->string('location_in_gym', 100); // Free Weights Area, Cardio Deck
+            $table->string('location_in_gym', 100);
             $table->enum('status', ['operational', 'needs_maintenance', 'under_repair', 'retired'])->default('operational');
             $table->date('purchase_date')->nullable();
             $table->date('next_maintenance_due')->nullable();
             $table->timestamps();
         });
 
-        // 3. Equipment Maintenances (Service records, facility locations, and repairs)
+        // 3. Maintenance Records
         Schema::create('equipment_maintenances', function (Blueprint $table) {
             $table->id();
-            $table->string('maintenance_code', 30)->unique(); // MNT-001
+            $table->string('maintenance_code', 30)->unique();
             $table->foreignId('equipment_id')->constrained('equipment')->cascadeOnDelete();
             $table->date('maintenance_date');
             $table->string('facility_or_location', 150);

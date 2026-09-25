@@ -10,18 +10,13 @@ return new class extends Migration
     {
         Schema::create('users', function (Blueprint $table) {
             $table->id();
-            $table->string('member_id')->unique()->nullable();
-            $table->string('name');
+            $table->string('name')->nullable();
+            $table->string('member_id', 30)->nullable()->index();
             $table->string('email')->unique();
-            $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
-            $table->enum('role', ['owner', 'member'])->default('member');
-            $table->enum('status', ['pending', 'active', 'inactive'])->default('pending');
-            $table->date('date_of_birth')->nullable();
-            $table->integer('age')->nullable();
-            $table->string('contact_number')->nullable();
-            $table->string('emergency_contact')->nullable();
-            $table->text('address')->nullable();
+            $table->enum('role', ['owner', 'staff', 'member'])->default('member');
+            $table->enum('account_status', ['active', 'pending', 'suspended'])->default('active');
+            $table->timestamp('email_verified_at')->nullable();
             $table->rememberToken();
             $table->timestamps();
         });
@@ -44,8 +39,8 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('users');
-        Schema::dropIfExists('password_reset_tokens');
         Schema::dropIfExists('sessions');
+        Schema::dropIfExists('password_reset_tokens');
+        Schema::dropIfExists('users');
     }
 };

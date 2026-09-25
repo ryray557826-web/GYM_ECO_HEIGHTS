@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        // 1. Gym Attendances / Entry Log Sheet
+        // 1. Gym Attendances
         Schema::create('attendances', function (Blueprint $table) {
             $table->id();
             $table->foreignId('customer_id')->constrained('customers')->cascadeOnDelete();
@@ -22,7 +22,7 @@ return new class extends Migration {
             $table->timestamps();
         });
 
-        // 2. Customer Gym Notes / Workout Log Sheets
+        // 2. Gym Notes (Workout logs)
         Schema::create('gym_notes', function (Blueprint $table) {
             $table->id();
             $table->foreignId('member_id')->constrained('members')->cascadeOnDelete();
