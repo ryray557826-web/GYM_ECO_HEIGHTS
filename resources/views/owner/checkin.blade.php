@@ -188,6 +188,9 @@
 <!-- ========================================================================= -->
 <!-- MODAL: MEMBER FOUND (STRICT SINGLE-BUTTON CHECK-IN LOGIC)                 -->
 <!-- ========================================================================= -->
+<!-- ========================================================================= -->
+<!-- MODAL: MEMBER FOUND (WITH GCASH PAYMENT SELECTOR & REF NUMBER)             -->
+<!-- ========================================================================= -->
 <dialog id="memberFoundModal" class="bg-[#0f172a] border border-[#1e293b] text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-start pb-3 border-b border-[#1e293b]">
         <div>
@@ -217,15 +220,47 @@
         </div>
     </div>
 
-    <!-- Actions Area: STRICTLY ONLY ONE BUTTON SHOWN AT A TIME -->
-    <div class="border-t border-[#1e293b] pt-4 space-y-2">
-        <!-- 1. Shown ONLY if member has an active monthly or multi-month pass -->
+    <!-- Payment Channel Selection (Shown ONLY if paying ₱50) -->
+    <div id="modal_payment_options" class="hidden border-t border-[#1e293b] pt-3 pb-2 space-y-2.5">
+        <label class="block text-[11px] font-heading font-bold uppercase tracking-wider text-gray-300">
+            Select ₱50 Payment Method:
+        </label>
+        
+        <div class="grid grid-cols-2 gap-2">
+            <!-- Cash Option -->
+            <label class="flex items-center space-x-2 bg-[#080d1a] border border-[#1e293b] p-2 rounded-lg cursor-pointer hover:border-[#76c800] transition select-none">
+                <input type="radio" name="checkin_payment_channel" value="cash" checked onchange="toggleGcashRefInput(this.value)"
+                    class="text-[#76c800] focus:ring-0">
+                <span class="text-xs font-semibold text-white">💵 Cash (₱50)</span>
+            </label>
+
+            <!-- GCash Option -->
+            <label class="flex items-center space-x-2 bg-[#080d1a] border border-[#1e293b] p-2 rounded-lg cursor-pointer hover:border-[#76c800] transition select-none">
+                <input type="radio" name="checkin_payment_channel" value="gcash" onchange="toggleGcashRefInput(this.value)"
+                    class="text-[#76c800] focus:ring-0">
+                <span class="text-xs font-semibold text-white">📱 GCash (₱50)</span>
+            </label>
+        </div>
+
+        <!-- GCash Reference Number Input Box -->
+        <div id="modal_gcash_ref_box" class="hidden pt-1">
+            <label class="block text-[10px] text-gray-400 uppercase font-mono mb-1">
+                GCash Reference Number (Optional)
+            </label>
+            <input type="text" id="checkin_gcash_ref" placeholder="e.g. 1009847291 / Ref Code"
+                class="w-full bg-[#080d1a] border border-[#1e293b] rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-[#76c800] outline-none">
+        </div>
+    </div>
+
+    <!-- Actions Area: STRICTLY ONLY ONE BUTTON DISPLAYED -->
+    <div class="border-t border-[#1e293b] pt-3 space-y-2">
+        <!-- 1. Shown ONLY for active monthly members -->
         <button id="modal_btn_monthly" onclick="processMonthlyCheckin()" 
             class="hidden w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg text-xs uppercase font-heading transition shadow-lg shadow-blue-600/20">
             Check-In As Active Monthly Member (₱0)
         </button>
 
-        <!-- 2. Shown ONLY if member is expired or paying a daily walk-in entry -->
+        <!-- 2. Shown ONLY for expired or per-session members -->
         <button id="modal_btn_session" onclick="processSessionCheckin()" 
             class="hidden w-full bg-[#76c800] hover:bg-[#68b000] text-black font-extrabold py-2.5 rounded-lg text-xs uppercase font-heading transition shadow-lg shadow-[#76c800]/20">
             Confirm Paid ₱50 & Log Entry
@@ -237,7 +272,6 @@
         </button>
     </div>
 </dialog>
-
 <!-- ========================================================================= -->
 <!-- MODAL: MEMBER NOT FOUND                                                   -->
 <!-- ========================================================================= -->
@@ -324,6 +358,18 @@ document.addEventListener("DOMContentLoaded", () => {
 let activeLookupMember = null;
 
 // 2. Member ID Lookup with Strict Single-Button Logic
+// Toggle GCash Reference Box
+function toggleGcashRefInput(method) {
+    const refBox = document.getElementById('modal_gcash_ref_box');
+    if (method === 'gcash') {
+        refBox.classList.remove('hidden');
+    } else {
+        refBox.classList.add('hidden');
+        document.getElementById('checkin_gcash_ref').value = '';
+    }
+}
+
+// Search Member
 function searchMember() {
     const id = document.getElementById('member_search_id').value.trim();
     if(!id) return;
@@ -338,7 +384,6 @@ function searchMember() {
         if(res.success) {
             activeLookupMember = res.member;
 
-            // Populate Modal Information
             document.getElementById('modal_m_name').innerText = activeLookupMember.name;
             document.getElementById('modal_m_id').innerText = activeLookupMember.member_id;
             document.getElementById('modal_m_plan').innerText = activeLookupMember.plan_type;
@@ -349,22 +394,26 @@ function searchMember() {
             const badge = document.getElementById('modal_m_badge');
             const btnMonthly = document.getElementById('modal_btn_monthly');
             const btnSession = document.getElementById('modal_btn_session');
+            const paymentOptions = document.getElementById('modal_payment_options');
 
-            // =========================================================================
-            // STRICT EXCLUSIVE BUTTON CONDITION:
-            // - Active Pass:        SHOW ONLY BLUE (₱0), HIDE GREEN
-            // - Expired / No Pass:  SHOW ONLY GREEN (₱50), HIDE BLUE
-            // =========================================================================
+            // Reset inputs
+            document.querySelector('input[name="checkin_payment_channel"][value="cash"]').checked = true;
+            document.getElementById('modal_gcash_ref_box').classList.add('hidden');
+            document.getElementById('checkin_gcash_ref').value = '';
+
+            // STRICT MUTUALLY EXCLUSIVE LOGIC
             if (activeLookupMember.has_active_monthly) {
                 badge.innerText = "ACTIVE PASS";
                 badge.className = "px-2.5 py-1 text-xs font-bold rounded bg-emerald-950 text-[#76c800] border border-[#76c800]/40";
-                btnMonthly.classList.remove('hidden'); // Show ONLY monthly pass check-in
-                btnSession.classList.add('hidden');    // Hide ₱50 per-session
+                btnMonthly.classList.remove('hidden'); // Show ONLY ₱0 check-in
+                btnSession.classList.add('hidden');
+                paymentOptions.classList.add('hidden'); // No payment needed
             } else {
                 badge.innerText = activeLookupMember.status || 'EXPIRED';
                 badge.className = "px-2.5 py-1 text-xs font-bold rounded bg-red-950 text-red-400 border border-red-800/40";
-                btnSession.classList.remove('hidden'); // Show ONLY ₱50 per-session
-                btnMonthly.classList.add('hidden');    // Hide monthly pass check-in
+                btnSession.classList.remove('hidden'); // Show ONLY ₱50 check-in
+                btnMonthly.classList.add('hidden');
+                paymentOptions.classList.remove('hidden'); // Show Cash vs GCash options
             }
 
             document.getElementById('memberFoundModal').showModal();
@@ -379,16 +428,23 @@ function searchMember() {
     });
 }
 
-// 3. Confirm ₱50 Paid Entry (Earns 3 points)
+// Confirm ₱50 Paid Entry (Sends Cash vs GCash + Reference Number)
 function processSessionCheckin() {
     if(!activeLookupMember) return;
+
+    const selectedChannel = document.querySelector('input[name="checkin_payment_channel"]:checked').value;
+    const gcashRef = document.getElementById('checkin_gcash_ref').value.trim();
+
     fetch("{{ route('owner.quickCheckIn.perSession') }}", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-TOKEN": "{{ csrf_token() }}" },
-        body: JSON.stringify({ member_id: activeLookupMember.id })
+        body: JSON.stringify({ 
+            member_id: activeLookupMember.id,
+            payment_method: selectedChannel,
+            reference_number: gcashRef
+        })
     }).then(() => location.reload());
 }
-
 // 4. Confirm Monthly Free Entry (₱0)
 function processMonthlyCheckin() {
     if(!activeLookupMember) return;

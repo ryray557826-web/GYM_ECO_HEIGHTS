@@ -51,65 +51,91 @@ class QuickCheckInController extends Controller
             ]
         ]);
     }
-// Confirm ₱50 Paid Entry + Award 3 Points
+// Confirm ₱50 Paid Entry (Cash or GCash with Reference Number) + Award 3 Points
     public function confirmPerSession(Request $request)
     {
-        $request->validate(['member_id' => 'required|exists:members,id']);
+        $request->validate([
+            'member_id'        => 'required|exists:members,id',
+            'payment_method'   => 'nullable|in:cash,gcash',
+            'reference_number' => 'nullable|string|max:100'
+        ]);
 
         return DB::transaction(function () use ($request) {
             $member = Member::with('customer')->findOrFail($request->member_id);
-            $cashMethod = PaymentMethod::firstOrCreate(['code' => 'cash'], ['name' => 'Physical / Walk-In']);
+            $methodCode = $request->payment_method ?? 'cash';
+            
+            // Resolve payment method (Cash vs GCash)
+            if ($methodCode === 'gcash') {
+                $method = PaymentMethod::firstOrCreate(
+                    ['code' => 'gcash'],
+                    ['name' => 'GCash', 'is_online' => true, 'requires_reference' => true]
+                );
+            } else {
+                $method = PaymentMethod::firstOrCreate(
+                    ['code' => 'cash'],
+                    ['name' => 'Physical / Walk-In', 'is_online' => false, 'requires_reference' => false]
+                );
+            }
+
             $today = Carbon::today()->toDateString();
             $now = Carbon::now()->toTimeString();
 
+            // 1. Record verified ₱50 payment
             $payment = Payment::create([
-                'payment_code' => 'PAY-' . Carbon::now()->format('YmdHis'),
-                'customer_id' => $member->customer_id,
-                'member_id' => $member->id,
-                'payment_method_id' => $cashMethod->id,
-                'amount' => 50.00,
-                'payment_type' => 'per_session',
-                'status' => 'verified',
-                'verified_at' => Carbon::now(),
-                'verified_by' => auth()->id()
+                'payment_code'      => 'PAY-' . Carbon::now()->format('YmdHis'),
+                'customer_id'       => $member->customer_id,
+                'member_id'         => $member->id,
+                'payment_method_id' => $method->id,
+                'amount'            => 50.00,
+                'payment_type'      => 'per_session',
+                'reference_number'  => $request->reference_number,
+                'status'            => 'verified',
+                'verified_at'       => Carbon::now(),
+                'verified_by'       => auth()->id()
             ]);
 
+            // 2. Recognize in Revenue Ledger
             Revenue::create([
                 'revenue_code' => 'REV-' . $payment->id,
-                'payment_id' => $payment->id,
-                'amount' => 50.00,
+                'payment_id'   => $payment->id,
+                'amount'       => 50.00,
                 'revenue_date' => $today
             ]);
 
+            // 3. Log Attendance
             Attendance::create([
-                'customer_id' => $member->customer_id,
-                'member_id' => $member->id,
-                'payment_id' => $payment->id,
+                'customer_id'     => $member->customer_id,
+                'member_id'       => $member->id,
+                'payment_id'      => $payment->id,
                 'attendance_date' => $today,
-                'check_in_time' => $now,
-                'entry_type' => 'per_session'
+                'check_in_time'   => $now,
+                'entry_type'      => 'per_session'
             ]);
 
-            // Daily payment awards 3 points
+            // 4. Award 3 Reward Points for Daily Session
             $member->increment('reward_points', 3);
 
+            // 5. Audit Log (Mentions GCash & Ref Number if present)
+            $methodLabel = ($methodCode === 'gcash') 
+                ? "GCash" . ($request->reference_number ? " (Ref: {$request->reference_number})" : "") 
+                : "Cash";
+
             AuditLog::create([
-                'log_code' => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
-                'user_id' => auth()->id(),
-                'action' => "Daily Payment (₱50) & +3 Points awarded to {$member->customer->full_name}",
-                'entity_type' => Member::class,
-                'entity_id' => $member->id,
+                'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                'user_id'         => auth()->id(),
+                'action'          => "Daily Payment (₱50 via {$methodLabel}) & +3 Points credited to {$member->customer->full_name}",
+                'entity_type'     => Member::class,
+                'entity_id'       => $member->id,
                 'validity_period' => '24 Hours',
-                'performed_by' => 'Owner'
+                'performed_by'    => 'Owner'
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => "₱50 Entry recorded & 3 Points awarded to {$member->customer->full_name}!"
+                'message' => "₱50 entry via {$methodLabel} recorded & 3 Points awarded to {$member->customer->full_name}!"
             ]);
         });
     }
-
     public function confirmMonthly(Request $request)
     {
         $request->validate(['member_id' => 'required|exists:members,id']);
