@@ -1,7 +1,6 @@
 @php
-    $globalRevenue = \App\Models\Payment::where('status', 'verified')->sum('amount');
-    $globalExpenses = \App\Models\Expense::sum('amount');
-    if ($globalExpenses == 0) $globalExpenses = 6500.00;
+    $globalRevenue = (float) \App\Models\Payment::where('status', 'verified')->sum('amount');
+    $globalExpenses = (float) \App\Models\Expense::sum('amount');
     $globalNet = $globalRevenue - $globalExpenses;
     $globalActive = \App\Models\Member::where('membership_status', 'active')->count();
     $globalPending = \App\Models\Payment::where('status', 'pending')->count() + \App\Models\Member::where('membership_status', 'pending')->count();
@@ -25,4 +24,4 @@
         <span class="text-xs uppercase font-heading font-semibold text-gray-400 tracking-wider">PENDING APPROVAL</span>
         <div class="text-3xl font-heading font-extrabold text-yellow-400 mt-1">{{ $globalPending }}</div>
     </div>
-</div>s
+</div>

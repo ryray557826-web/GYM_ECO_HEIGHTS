@@ -17,7 +17,7 @@
         </button>
     </div>
 
-    <!-- Tabular Promo / Package Table -->
+    <!-- Packages Table -->
     <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-x-auto shadow-md">
         <table class="w-full text-left text-xs">
             <thead class="bg-slate-950 text-slate-400 uppercase font-heading text-[10px]">
@@ -80,7 +80,7 @@
     </div>
 </div>
 
-<!-- Modal: Create Promo / Plan -->
+<!-- Modal: Create Promo -->
 <dialog id="addPromoModal" class="bg-slate-900 border border-slate-800 text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-4">
         <h3 class="text-sm font-heading font-extrabold uppercase tracking-wider text-white">+ Create Gym Promo / Package</h3>
