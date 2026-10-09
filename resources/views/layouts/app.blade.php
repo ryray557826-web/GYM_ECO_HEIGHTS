@@ -28,19 +28,24 @@
             </span>
         </div>
 
-        @auth
+      @auth
         <div class="flex items-center space-x-4">
-            <span class="text-xs text-gray-300 font-medium">
-                {{ auth()->user()->customer ? auth()->user()->customer->full_name : auth()->user()->name ?? 'Owner' }}
-            </span>
+            <a href="{{ route('profile.show') }}" class="text-xs text-gray-300 hover:text-white transition flex items-center space-x-1.5">
+                <span>👤</span>
+                <span class="font-medium underline-offset-4 hover:underline">
+                    {{ auth()->user()->isOwner() ? 'Owner Profile' : (auth()->user()->customer ? auth()->user()->customer->full_name : 'My Profile') }}
+                </span>
+            </a>
+
             @if(auth()->user()->customer && auth()->user()->customer->member)
                 <span class="bg-emerald-950/80 border border-[#76c800]/40 text-[#76c800] text-[11px] font-mono font-bold px-2 py-0.5 rounded">
                     {{ auth()->user()->customer->member->member_code }}
                 </span>
             @endif
+
             <form action="{{ route('logout') }}" method="POST" class="inline">
                 @csrf
-                <button type="submit" class="text-xs font-semibold text-gray-400 hover:text-white transition">
+                <button type="submit" class="text-xs font-semibold text-gray-400 hover:text-rose-400 transition">
                     Logout
                 </button>
             </form>

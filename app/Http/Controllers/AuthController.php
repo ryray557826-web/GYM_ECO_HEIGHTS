@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Schema;
 use App\Models\User;
 use App\Models\Customer;
 use App\Models\Member;
+use App\Models\AuditLog;
 use Carbon\Carbon;
 
 class AuthController extends Controller
@@ -23,17 +24,20 @@ class AuthController extends Controller
     {
         $request->validate([
             'identifier' => 'required|string',
-            'password' => 'required|string',
+            'password'   => 'required|string',
         ]);
 
         $input = trim($request->identifier);
 
+        // 1. Check direct user email match
         $user = User::where('email', strtolower($input))->first();
 
+        // 2. Check users.member_id column if present
         if (!$user && Schema::hasColumn('users', 'member_id')) {
             $user = User::whereRaw('UPPER(member_id) = ?', [strtoupper($input)])->first();
         }
 
+        // 3. Check members.member_code relation
         if (!$user) {
             $member = Member::whereRaw('UPPER(member_code) = ?', [strtoupper($input)])
                             ->with('customer.user')
@@ -46,7 +50,7 @@ class AuthController extends Controller
 
         if (!$user) {
             return back()->withErrors([
-                'identifier' => "Account [{$input}] was not found in the gym database."
+                'identifier' => "No account found matching \"{$input}\"."
             ])->withInput();
         }
 
@@ -56,6 +60,7 @@ class AuthController extends Controller
             ])->withInput();
         }
 
+        // Guarantee owner account status is active
         if ($user->isOwner()) {
             if (Schema::hasColumn('users', 'account_status')) $user->account_status = 'active';
             if (Schema::hasColumn('users', 'status')) $user->status = 'active';
@@ -63,11 +68,11 @@ class AuthController extends Controller
             $user->save();
         }
 
-        // Remembers user session across browser restarts
         $remember = $request->boolean('remember');
         Auth::login($user, $remember);
         $request->session()->regenerate();
 
+        // Role-based transport
         if ($user->isOwner()) {
             return redirect()->intended(route('owner.checkin'));
         }
@@ -83,47 +88,48 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $request->validate([
-            'first_name' => 'required|string|max:100',
-            'last_name' => 'required|string|max:100',
-            'email' => 'required|email|unique:users,email',
-            'password' => 'required|string|min:6',
+            'first_name'     => 'required|string|max:100',
+            'last_name'      => 'required|string|max:100',
+            'email'          => 'required|email|unique:users,email',
+            'password'       => 'required|string|min:6',
             'contact_number' => 'required|string|max:30',
-            'date_of_birth' => 'required|date',
-            'address' => 'required|string',
+            'date_of_birth'  => 'required|date',
+            'address'        => 'required|string',
         ]);
 
         return DB::transaction(function () use ($request) {
             $userData = [
-                'email' => strtolower($request->email),
-                'password' => Hash::make($request->password),
+                'email'          => strtolower($request->email),
+                'password'       => Hash::make($request->password),
+                'role'           => 'member',
+                'account_status' => 'pending', // Public registrations default to pending
             ];
             if (Schema::hasColumn('users', 'name')) $userData['name'] = "{$request->first_name} {$request->last_name}";
-            if (Schema::hasColumn('users', 'role')) $userData['role'] = 'member';
-            if (Schema::hasColumn('users', 'account_status')) $userData['account_status'] = 'active';
 
             $user = User::create($userData);
 
             $dob = Carbon::parse($request->date_of_birth);
             $customer = Customer::create([
-                'user_id' => $user->id,
-                'first_name' => $request->first_name,
-                'last_name' => $request->last_name,
-                'email' => strtolower($request->email),
-                'contact_number' => $request->contact_number,
-                'date_of_birth' => $request->date_of_birth,
-                'age' => $dob->age,
+                'user_id'                 => $user->id,
+                'first_name'              => $request->first_name,
+                'last_name'               => $request->last_name,
+                'email'                   => strtolower($request->email),
+                'contact_number'          => $request->contact_number,
+                'date_of_birth'           => $request->date_of_birth,
+                'age'                     => $dob->age,
                 'emergency_contact_phone' => $request->emergency_contact_phone,
-                'address' => $request->address,
+                'address'                 => $request->address,
             ]);
 
             $count = Member::count() + 1;
             $memberCode = 'ECO-' . str_pad($count, 3, '0', STR_PAD_LEFT);
 
-            Member::create([
-                'customer_id' => $customer->id,
-                'member_code' => $memberCode,
-                'joined_date' => Carbon::today(),
-                'membership_status' => 'active',
+            $member = Member::create([
+                'customer_id'       => $customer->id,
+                'member_code'       => $memberCode,
+                'joined_date'       => Carbon::today(),
+                'membership_status' => 'pending',
+                'reward_points'     => 0,
             ]);
 
             if (Schema::hasColumn('users', 'member_id')) {
@@ -131,12 +137,25 @@ class AuthController extends Controller
                 $user->save();
             }
 
-            // Always login with remember token true on registration
+            if (class_exists(AuditLog::class)) {
+                $auditData = [
+                    'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                    'user_id'         => $user->id,
+                    'action'          => "New Member Self-Registered ({$memberCode}) - Awaiting Approval",
+                    'performed_by'    => 'Public Registration',
+                    'validity_period' => 'Pending Verification',
+                ];
+                if (Schema::hasColumn('audit_logs', 'entity_type')) $auditData['entity_type'] = Member::class;
+                if (Schema::hasColumn('audit_logs', 'entity_id')) $auditData['entity_id'] = $member->id;
+
+                AuditLog::create($auditData);
+            }
+
             Auth::login($user, true);
 
             return redirect()->route('member.overview')->with(
-                'success',
-                "Welcome {$request->first_name}! Your Member ID is {$memberCode}."
+                'info',
+                "Registration successful! Your Member ID is {$memberCode}. Your account is pending owner verification (you may apply for daily passes in the meantime)."
             );
         });
     }
