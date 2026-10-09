@@ -28,6 +28,7 @@ use App\Models\GymNote;
 use App\Models\AuditLog;
 use App\Models\Announcement;
 use App\Services\FirebaseService;
+use App\Models\EquipmentUnit;
 
 class DatabaseSeeder extends Seeder
 {
@@ -196,13 +197,25 @@ class DatabaseSeeder extends Seeder
 
             // Create individual physical unit codes (e.g. EQP-001-U1, EQP-001-U2...)
             for ($u = 1; $u <= $ed['qty']; $u++) {
-                \App\Models\EquipmentUnit::create([
-                    'equipment_id'         => $eq->id,
-                    'unit_code'            => "{$ed['code']}-U{$u}",
-                    'unit_label'           => "{$ed['name']} #{$u}",
-                    'status'               => ($u === 2 && $ed['code'] === 'EQP-001') ? 'under_repair' : $ed['status'],
-                    'next_maintenance_due' => Carbon::parse($ed['next']),
-                ]);
+                if (class_exists(EquipmentUnit::class)) {
+                    EquipmentUnit::create([
+                        'equipment_id'         => $eq->id,
+                        'unit_code'            => "{$ed['code']}-U{$u}",
+                        'unit_label'           => "{$ed['name']} #{$u}",
+                        'status'               => ($u === 2 && $ed['code'] === 'EQP-001') ? 'under_repair' : $ed['status'],
+                        'next_maintenance_due' => Carbon::parse($ed['next']),
+                    ]);
+                } else {
+                    DB::table('equipment_units')->insert([
+                        'equipment_id'         => $eq->id,
+                        'unit_code'            => "{$ed['code']}-U{$u}",
+                        'unit_label'           => "{$ed['name']} #{$u}",
+                        'status'               => ($u === 2 && $ed['code'] === 'EQP-001') ? 'under_repair' : $ed['status'],
+                        'next_maintenance_due' => Carbon::parse($ed['next']),
+                        'created_at'           => now(),
+                        'updated_at'           => now(),
+                    ]);
+                }
             }
         }
 
