@@ -183,7 +183,7 @@ class DatabaseSeeder extends Seeder
         ];
 
         foreach ($equipmentsData as $ed) {
-            Equipment::create([
+            $eq = Equipment::create([
                 'equipment_code'       => $ed['code'],
                 'category_id'          => $ed['category_id'],
                 'name'                 => $ed['name'],
@@ -194,15 +194,14 @@ class DatabaseSeeder extends Seeder
                 'next_maintenance_due' => Carbon::parse($ed['next']),
             ]);
 
-            if ($firebase) {
-                $firebase->setDocument('equipment', $ed['code'], [
-                    'equipment_code'       => $ed['code'],
-                    'name'                 => $ed['name'],
-                    'category'             => $ed['cat_name'],
-                    'quantity'             => (int) $ed['qty'],
-                    'location_in_gym'      => $ed['loc'],
-                    'status'               => $ed['status'],
-                    'next_maintenance_due' => $ed['next'],
+            // Create individual physical unit codes (e.g. EQP-001-U1, EQP-001-U2...)
+            for ($u = 1; $u <= $ed['qty']; $u++) {
+                \App\Models\EquipmentUnit::create([
+                    'equipment_id'         => $eq->id,
+                    'unit_code'            => "{$ed['code']}-U{$u}",
+                    'unit_label'           => "{$ed['name']} #{$u}",
+                    'status'               => ($u === 2 && $ed['code'] === 'EQP-001') ? 'under_repair' : $ed['status'],
+                    'next_maintenance_due' => Carbon::parse($ed['next']),
                 ]);
             }
         }

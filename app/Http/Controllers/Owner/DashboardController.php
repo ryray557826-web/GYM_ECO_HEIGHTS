@@ -25,7 +25,7 @@ class DashboardController extends Controller
         $startOfYear = Carbon::now()->startOfYear()->toDateString();
         $endOfYear = Carbon::now()->endOfYear()->toDateString();
 
-        // 1. Calculate Real Financial Metrics (Stored Procedure with Eloquent Fallback)
+        // 1. Calculate Real Financial Metrics
         try {
             DB::statement("CALL CalculateProfitLossSummary('{$startOfYear}', '{$endOfYear}', @rev, @exp, @net, @ratio)");
             $spResult = DB::select("SELECT @rev AS total_revenue, @exp AS total_expenses, @net AS net_income, @ratio AS profit_loss_ratio")[0];
@@ -35,28 +35,37 @@ class DashboardController extends Controller
             $netIncome     = (float) ($spResult->net_income ?? 0);
             $ratio         = (float) ($spResult->profit_loss_ratio ?? 0);
         } catch (\Exception $e) {
-            // Natural database calculations without hardcoded demo offsets
             $totalRevenue  = (float) Payment::where('status', 'verified')->sum('amount');
             $totalExpenses = (float) Expense::sum('amount');
             $netIncome     = $totalRevenue - $totalExpenses;
             $ratio         = $totalRevenue > 0 ? round($netIncome / $totalRevenue, 4) : 0.0;
         }
 
-        // 2. Member & Pending Approvals Metrics
-        $activeMembersCount = Member::where('membership_status', 'active')->count();
+        // 2. Real 6-Month Chart Data (Defaults to 0 if no transactions exist)
+        $chartLabels = [];
+        $chartRevenue = [];
+        $chartExpenses = [];
+
+        for ($i = 5; $i >= 0; $i--) {
+            $month = Carbon::now()->subMonths($i);
+            $start = $month->copy()->startOfMonth()->toDateString();
+            $end   = $month->copy()->endOfMonth()->toDateString();
+
+            $chartLabels[] = $month->format('M');
+            $chartRevenue[] = (float) Payment::where('status', 'verified')
+                ->whereBetween('created_at', [$start . ' 00:00:00', $end . ' 23:59:59'])
+                ->sum('amount');
+            $chartExpenses[] = (float) Expense::whereBetween('expense_date', [$start, $end])->sum('amount');
+        }
+
+        $activeMembersCount   = Member::where('membership_status', 'active')->count();
         $pendingPaymentsCount = Payment::where('status', 'pending')->count();
         $pendingMembersCount  = Member::where('membership_status', 'pending')->count();
-        $pendingCount = $pendingPaymentsCount + $pendingMembersCount;
+        $pendingCount         = $pendingPaymentsCount + $pendingMembersCount;
 
-        // 3. Attendance Entries for Today
-        $todayDate = Carbon::today()->toDateString();
-        $todayEntries = Attendance::where('attendance_date', $todayDate)
-            ->with(['customer', 'member'])
-            ->orderBy('check_in_time', 'desc')
-            ->get();
-
-        // 4. Recent Walk-In / Per-Session Entries
-        $recentPerSession = Attendance::where('entry_type', 'per_session')
+        $todayDate         = Carbon::today()->toDateString();
+        $todayEntries      = Attendance::where('attendance_date', $todayDate)->with(['customer', 'member'])->orderBy('check_in_time', 'desc')->get();
+        $recentPerSession  = Attendance::where('entry_type', 'per_session')
             ->with(['customer', 'member', 'payment'])
             ->latest('attendance_date')
             ->latest('check_in_time')
@@ -68,13 +77,15 @@ class DashboardController extends Controller
             'totalExpenses',
             'netIncome',
             'ratio',
+            'chartLabels',
+            'chartRevenue',
+            'chartExpenses',
             'activeMembersCount',
             'pendingCount',
             'todayEntries',
             'recentPerSession'
         ));
     }
-
     /**
      * Display the Full Tabular Attendance Log Sheet
      */

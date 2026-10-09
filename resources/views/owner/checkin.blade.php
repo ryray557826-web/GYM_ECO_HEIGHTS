@@ -21,7 +21,8 @@
                 <p class="text-xs text-gray-400 mt-1 mb-4">Enter a Member ID to look up the member and record an entry.</p>
 
                 <div class="flex gap-2">
-                    <input type="text" id="member_search_id" placeholder="ECO-001" 
+                    <!-- Completely blank input without pre-filled text or demo numbers -->
+                    <input type="text" id="member_search_id" placeholder="Enter Member ID..." 
                         class="flex-1 bg-[#080d1a] border border-[#1e293b] rounded-lg px-4 py-2.5 text-xs uppercase font-mono text-white focus:outline-none focus:border-[#76c800]"
                         onkeydown="if(event.key === 'Enter') searchMember()">
                     <button type="button" onclick="searchMember()" 
@@ -330,16 +331,27 @@
 @push('scripts')
 <script>
 // 1. Render 6-Month Bar Chart
+// Dynamic 6-Month Chart (Renders blank/0 when no transactions exist)
 document.addEventListener("DOMContentLoaded", () => {
     const el = document.getElementById('revenueExpensesChartFront');
     if (el) {
         new Chart(el.getContext('2d'), {
             type: 'bar',
             data: {
-                labels: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'],
+                labels: {!! json_encode($chartLabels ?? ['May','Jun','Jul','Aug','Sep','Oct']) !!},
                 datasets: [
-                    { label: 'Revenue', data: [8000, 10000, 11500, 10500, 14000, {{ $totalRevenue ?? 4600 }}], backgroundColor: '#76c800', borderRadius: 4 },
-                    { label: 'Expenses', data: [1200, 1500, 800, 3500, 5000, {{ $totalExpenses ?? 6500 }}], backgroundColor: '#dc2626', borderRadius: 4 }
+                    { 
+                        label: 'Revenue', 
+                        data: {!! json_encode($chartRevenue ?? [0,0,0,0,0,0]) !!}, 
+                        backgroundColor: '#76c800', 
+                        borderRadius: 4 
+                    },
+                    { 
+                        label: 'Expenses', 
+                        data: {!! json_encode($chartExpenses ?? [0,0,0,0,0,0]) !!}, 
+                        backgroundColor: '#dc2626', 
+                        borderRadius: 4 
+                    }
                 ]
             },
             options: {
@@ -354,7 +366,6 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 });
-
 let activeLookupMember = null;
 
 // 2. Member ID Lookup with Strict Single-Button Logic
