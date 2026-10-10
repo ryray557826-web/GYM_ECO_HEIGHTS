@@ -52,6 +52,7 @@
                         $sub = $m->latestSubscription;
                         $pkg = $sub ? $sub->package : null;
                         $isSubActive = $sub && $sub->status === 'active' && \Carbon\Carbon::parse($sub->end_time)->isFuture();
+                        $isDaily = $isSubActive && $pkg && ($pkg->plan_type === 'daily' || $pkg->duration_in_days <= 1);
                         $isLongTerm = $isSubActive && $pkg && ($pkg->duration_in_days >= 28 || in_array($pkg->plan_type, ['monthly', 'quarterly', 'yearly', 'annual']));
                     @endphp
                     <tr class="hover:bg-slate-800/40 transition">
@@ -74,10 +75,14 @@
                             @endif
                         </td>
                         
-                        <!-- 2. SPECIFIC PASS ACCESS TIER STATUS -->
+                        <!-- 2. SPECIFIC PASS ACCESS STATUS -->
                         <td class="p-3.5 font-sans">
                             @if($m->membership_status === 'suspended')
                                 <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-rose-950 text-rose-300 border border-rose-800/40">SUSPENDED</span>
+                            @elseif($isDaily)
+                                <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/30 uppercase">
+                                    ACTIVE (DAILY PASS)
+                                </span>
                             @elseif($isSubActive && $pkg)
                                 <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/30 uppercase">
                                     ACTIVE ({{ strtoupper($pkg->plan_type) }})
@@ -88,16 +93,21 @@
                         </td>
 
                         <td class="p-3.5 text-emerald-400 font-bold">{{ $m->reward_points ?? 0 }} PTS</td>
+                        
+                        <!-- 3. EXPIRATION DATE -->
                         <td class="p-3.5">
-                            @if($isSubActive && $sub)
-                                {{ $sub->end_time->format('Y-m-d') }}
+                            @if($isDaily && $sub)
+                                <span class="text-white">{{ $sub->end_time->format('Y-m-d') }}</span>
+                                <span class="text-emerald-400 text-[10px] block font-sans font-semibold">(End of Day)</span>
+                            @elseif($isSubActive && $sub)
+                                <span class="text-white">{{ $sub->end_time->format('Y-m-d') }}</span>
                             @else
                                 <span class="text-slate-500 font-sans italic text-[11px]">No active subscription</span>
                             @endif
                         </td>
+
                         <td class="p-3.5">{{ $m->customer ? $m->customer->contact_number : '—' }}</td>
                         <td class="p-3.5 text-right font-sans space-x-2">
-                            <!-- 1-Click Approve button (Only when Verification is PENDING) -->
                             @if(($m->verification_status ?? 'pending') === 'pending')
                                 <form action="{{ route('owner.members.approve', $m->id) }}" method="POST" class="inline">
                                     @csrf
@@ -109,8 +119,8 @@
                             <button onclick="openEditMemberModal(
                                 {{ json_encode($m) }}, 
                                 {{ json_encode($m->customer) }}, 
-                                '{{ $sub ? $sub->end_time->format('Y-m-d') : '' }}',
-                                '{{ $pkg ? $pkg->name : 'No active subscription' }}',
+                                '{{ $sub && $isSubActive ? $sub->end_time->format('Y-m-d') : '' }}',
+                                '{{ $pkg ? addslashes($pkg->name) : 'No active subscription' }}',
                                 '{{ $pkg ? ucfirst($pkg->plan_type) : 'None' }}',
                                 '{{ $sub ? $sub->start_time->format('M d, Y H:i') : 'N/A' }}',
                                 {{ $isLongTerm ? 1 : 0 }}
@@ -158,7 +168,7 @@
         <div>
             <label class="block text-slate-400 mb-1">Default Password *</label>
             <input type="text" name="password" value="pass123" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-mono">
-            <p class="text-[10px] text-slate-500 mt-0.5">Visible default password given to the member.</p>
+            <p class="text-[10px] text-slate-500 mt-0.5">The member will use this password to sign in.</p>
         </div>
         <div class="grid grid-cols-2 gap-3">
             <div>
@@ -171,7 +181,7 @@
             </div>
         </div>
         <div>
-            <label class="block text-slate-400 mb-1">Initial Plan (Optional)</label>
+            <label class="block text-slate-400 mb-1">Initial Plan (Registers Revenue & Activates Pass)</label>
             <select name="package_id" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white">
                 <option value="">No Initial Pass</option>
                 @foreach($packages as $pkg)
@@ -185,7 +195,7 @@
         </div>
         <div class="bg-emerald-950/40 border border-emerald-500/20 p-2.5 rounded-lg text-[11px] text-emerald-300 flex items-center space-x-2">
             <span>✓</span>
-            <span>This member will be enrolled with <strong>VERIFIED</strong> account status immediately.</span>
+            <span>Enrolled with <strong>VERIFIED</strong> account status, immediate pass activation, and recorded revenue.</span>
         </div>
         <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
             <button type="button" onclick="document.getElementById('addMemberModal').close()" class="px-3 py-1.5 border border-slate-800 text-slate-300 rounded-lg">Cancel</button>
@@ -194,7 +204,7 @@
     </form>
 </dialog>
 
-<!-- Modal: Edit Member with Non-Editable Pass Info & Lock Controls -->
+<!-- Modal: Edit Member -->
 <dialog id="editMemberModal" class="bg-slate-900 border border-slate-800 text-white p-6 rounded-2xl max-w-lg w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-4">
         <div>
@@ -207,7 +217,7 @@
     <form id="editMemberForm" method="POST" class="space-y-4 text-xs">
         @csrf
 
-        <!-- NON-EDITABLE PASS INFORMATION PANEL -->
+        <!-- Read-Only Subscription Panel -->
         <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2 font-sans">
             <span class="text-[10px] uppercase tracking-wider text-slate-400 font-heading font-bold block">CURRENT SUBSCRIPTION DETAILS (READ-ONLY)</span>
             <div class="grid grid-cols-2 gap-2 text-slate-300">
@@ -242,7 +252,6 @@
         </div>
 
         <div class="grid grid-cols-2 gap-3">
-            <!-- 1. Verification Dropdown -->
             <div>
                 <label class="block text-slate-400 mb-1 font-semibold">Verification Status</label>
                 <select name="verification_status" id="edit_verification_status" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-semibold">
@@ -250,7 +259,6 @@
                     <option value="pending">Pending</option>
                 </select>
             </div>
-            <!-- 2. Pass Access Dropdown -->
             <div>
                 <label class="block text-slate-400 mb-1 font-semibold">Pass Access Status</label>
                 <select name="membership_status" id="edit_status" onchange="toggleSuspensionField(this.value)" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-semibold">
@@ -261,7 +269,6 @@
             </div>
         </div>
 
-        <!-- Expiry Date Field -->
         <div>
             <label class="block text-slate-400 mb-1 font-semibold">Plan Expiry Date</label>
             <input type="date" name="end_date" id="edit_end_date" onclick="this.showPicker()" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-mono cursor-pointer">
@@ -270,7 +277,6 @@
             </p>
         </div>
 
-        <!-- Conditional Suspension Reason -->
         <div id="suspension_reason_box" class="hidden">
             <label class="block text-rose-400 mb-1 font-semibold">Suspension Reason / Comments *</label>
             <textarea name="suspension_reason" id="edit_suspension_reason" rows="2" placeholder="e.g. Broken gym rules, damage to equipment, payment disputes..." class="w-full bg-slate-950 border border-rose-900/60 rounded p-2 text-white"></textarea>
@@ -278,7 +284,7 @@
 
         <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
             <button type="button" onclick="document.getElementById('editMemberModal').close()" class="px-3 py-1.5 border border-slate-800 text-slate-300 rounded-lg">Cancel</button>
-            <button type="submit" class="px-4 py-1.5 bg-emerald-500 text-slate-950 font-extrabold rounded-lg uppercase font-heading">Update Member</button>
+            <button type="submit" class="px-4 py-1.5 bg-emerald-500 text-slate-950 font-extrabold rounded uppercase font-heading">Update Member</button>
         </div>
     </form>
 </dialog>
@@ -307,7 +313,6 @@ function openEditMemberModal(member, customer, endDate, passName, passTier, pass
     document.getElementById('edit_last_name').value = customer ? customer.last_name : '';
     document.getElementById('edit_contact').value = customer ? customer.contact_number : '';
     
-    // Set Non-editable Pass Information
     document.getElementById('display_pass_name').innerText = passName;
     document.getElementById('display_pass_tier').innerText = passTier;
     document.getElementById('display_pass_start').innerText = passStart;
@@ -323,8 +328,7 @@ function openEditMemberModal(member, customer, endDate, passName, passTier, pass
     const endDateInput = document.getElementById('edit_end_date');
     const lockText = document.getElementById('lock_reason_text');
 
-    // RULE: If member has NO active subscription OR subscription is DAILY (isLongTerm === 0),
-    // they are NOT editable or clickable!
+    // Rule: Daily or inactive memberships cannot have status/expiry modified manually
     if (isLongTerm === 0) {
         statusSelect.disabled = true;
         statusSelect.classList.add('opacity-50', 'cursor-not-allowed');
