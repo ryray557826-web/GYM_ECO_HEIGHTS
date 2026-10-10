@@ -14,14 +14,14 @@ return new class extends Migration {
             $table->string('employee_code', 30)->unique();
             $table->string('first_name', 100);
             $table->string('last_name', 100);
-            $table->enum('position', ['owner', 'front_desk', 'attendant', 'encoder', 'collector'])->default('front_desk');
+            $table->string('position', 50)->default('front_desk');
             $table->string('contact_number', 30);
             $table->date('hire_date');
-            $table->enum('status', ['active', 'on_leave', 'resigned'])->default('active');
+            $table->string('status', 50)->default('active');
             $table->timestamps();
         });
 
-        // 2. Customers Table (Demographics)
+        // 2. Customers Table
         Schema::create('customers', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->nullable()->constrained('users')->nullOnDelete();
@@ -37,13 +37,22 @@ return new class extends Migration {
             $table->timestamps();
         });
 
-        // 3. Members Table (Gym ID & Reward Points)
+        // 3. Members Table (Uses string columns to prevent SQLite CHECK constraint crashes)
         Schema::create('members', function (Blueprint $table) {
             $table->id();
             $table->foreignId('customer_id')->unique()->constrained('customers')->cascadeOnDelete();
-            $table->string('member_code', 30)->unique(); // E.g., ECO-001
+            $table->string('member_code', 30)->unique();
             $table->date('joined_date');
-            $table->enum('membership_status', ['active', 'expired', 'pending', 'cancelled'])->default('pending');
+            
+            // Verification Status: 'pending' vs 'verified'
+            $table->string('verification_status', 50)->default('pending');
+            
+            // Pass Access Status: 'active', 'expired', 'suspended', 'pending', 'cancelled'
+            $table->string('membership_status', 50)->default('pending');
+            
+            // Suspension Comment
+            $table->text('suspension_reason')->nullable();
+            
             $table->unsignedInteger('reward_points')->default(0);
             $table->text('medical_notes')->nullable();
             $table->timestamps();

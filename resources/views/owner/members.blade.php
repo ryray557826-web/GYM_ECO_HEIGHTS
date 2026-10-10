@@ -5,6 +5,14 @@
     @include('owner._top_stats')
     @include('owner._navigation')
 
+    <!-- Flash Notifications -->
+    @if(session('success'))
+        <div class="bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between">
+            <span>✓ {{ session('success') }}</span>
+            <button onclick="this.parentElement.remove()" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+    @endif
+
     <div class="space-y-4">
         <!-- Actions Toolbar -->
         <div class="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
@@ -50,7 +58,8 @@
                                 </span>
                             @endif
                         </td>
-                        <!-- 1. ACCOUNT VERIFICATION STATUS (Pending vs Verified) -->
+                        
+                        <!-- 1. ACCOUNT VERIFICATION (Pending vs Verified) -->
                         <td class="p-3.5 font-sans">
                             @if(($m->verification_status ?? 'pending') === 'verified')
                                 <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-sky-950 text-sky-400 border border-sky-500/30">VERIFIED</span>
@@ -58,7 +67,8 @@
                                 <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-amber-950 text-amber-400 border border-amber-800/30">PENDING</span>
                             @endif
                         </td>
-                        <!-- 2. MEMBERSHIP PASS STATUS (Active Pass vs Expired/No Pass vs Suspended) -->
+                        
+                        <!-- 2. PASS ACCESS (Active Pass vs Expired/No Pass vs Suspended) -->
                         <td class="p-3.5 font-sans">
                             @if($m->membership_status === 'active' && $m->latestSubscription && \Carbon\Carbon::parse($m->latestSubscription->end_time)->isFuture())
                                 <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/30">ACTIVE PASS</span>
@@ -68,6 +78,7 @@
                                 <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-slate-800 text-slate-400 border border-slate-700">NO ACTIVE PASS</span>
                             @endif
                         </td>
+
                         <td class="p-3.5 text-emerald-400 font-bold">{{ $m->reward_points ?? 0 }} PTS</td>
                         <td class="p-3.5">
                             @if($m->latestSubscription && \Carbon\Carbon::parse($m->latestSubscription->end_time)->isFuture())
@@ -78,6 +89,7 @@
                         </td>
                         <td class="p-3.5">{{ $m->customer ? $m->customer->contact_number : '—' }}</td>
                         <td class="p-3.5 text-right font-sans space-x-2">
+                            <!-- 1-Click Approve button (Appears only when Verification is PENDING) -->
                             @if(($m->verification_status ?? 'pending') === 'pending')
                                 <form action="{{ route('owner.members.approve', $m->id) }}" method="POST" class="inline">
                                     @csrf
@@ -103,7 +115,7 @@
     </div>
 </div>
 
-<!-- Modal: Add Approved Member (With Default Password & Calendar On Click) -->
+<!-- Modal: Add Pre-Approved Member -->
 <dialog id="addMemberModal" class="bg-slate-900 border border-slate-800 text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-4">
         <div>
@@ -158,7 +170,7 @@
         </div>
         <div class="bg-emerald-950/40 border border-emerald-500/20 p-2.5 rounded-lg text-[11px] text-emerald-300 flex items-center space-x-2">
             <span>✓</span>
-            <span>This member will be registered with <strong>VERIFIED</strong> account status immediately.</span>
+            <span>This member will be enrolled with <strong>VERIFIED</strong> account status immediately.</span>
         </div>
         <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
             <button type="button" onclick="document.getElementById('addMemberModal').close()" class="px-3 py-1.5 border border-slate-800 text-slate-300 rounded-lg">Cancel</button>
@@ -167,7 +179,7 @@
     </form>
 </dialog>
 
-<!-- Modal: Edit Member (With Suspension Reason & Clickable Calendar) -->
+<!-- Modal: Edit Member -->
 <dialog id="editMemberModal" class="bg-slate-900 border border-slate-800 text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-4">
         <div>
@@ -192,7 +204,17 @@
             <label class="block text-slate-400 mb-1">Contact Phone</label>
             <input type="text" name="contact_number" id="edit_contact" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono">
         </div>
+
         <div class="grid grid-cols-2 gap-3">
+            <!-- 1. Verification Dropdown -->
+            <div>
+                <label class="block text-slate-400 mb-1">Verification Status</label>
+                <select name="verification_status" id="edit_verification_status" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-semibold">
+                    <option value="verified">Verified</option>
+                    <option value="pending">Pending</option>
+                </select>
+            </div>
+            <!-- 2. Pass Access Dropdown -->
             <div>
                 <label class="block text-slate-400 mb-1">Pass Access Status</label>
                 <select name="membership_status" id="edit_status" onchange="toggleSuspensionField(this.value)" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-semibold">
@@ -201,13 +223,14 @@
                     <option value="suspended">Suspended</option>
                 </select>
             </div>
-            <div>
-                <label class="block text-slate-400 mb-1">Plan Expiry Date</label>
-                <input type="date" name="end_date" id="edit_end_date" onclick="this.showPicker()" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono cursor-pointer">
-            </div>
         </div>
 
-        <!-- Conditional Suspension Reason Field -->
+        <div>
+            <label class="block text-slate-400 mb-1">Plan Expiry Date</label>
+            <input type="date" name="end_date" id="edit_end_date" onclick="this.showPicker()" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono cursor-pointer">
+        </div>
+
+        <!-- Conditional Suspension Reason -->
         <div id="suspension_reason_box" class="hidden">
             <label class="block text-rose-400 mb-1 font-semibold">Suspension Reason / Comments *</label>
             <textarea name="suspension_reason" id="edit_suspension_reason" rows="2" placeholder="e.g. Broken gym rules, damage to equipment, payment disputes..." class="w-full bg-slate-950 border border-rose-900/60 rounded p-2 text-white"></textarea>
@@ -243,6 +266,8 @@ function openEditMemberModal(member, customer, endDate) {
     document.getElementById('edit_first_name').value = customer ? customer.first_name : '';
     document.getElementById('edit_last_name').value = customer ? customer.last_name : '';
     document.getElementById('edit_contact').value = customer ? customer.contact_number : '';
+    
+    document.getElementById('edit_verification_status').value = member.verification_status || 'pending';
     document.getElementById('edit_status').value = member.membership_status || 'active';
     document.getElementById('edit_end_date').value = endDate || '';
     document.getElementById('edit_suspension_reason').value = member.suspension_reason || '';

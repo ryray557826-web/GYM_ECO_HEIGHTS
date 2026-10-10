@@ -19,7 +19,7 @@ class MemberManagementController extends Controller
 {
     public function index()
     {
-        // Auto-expire any overdue daily or monthly subscriptions
+        // Automatically mark unrenewed subscriptions whose validity has passed as expired
         $overdueSubs = MemberSubscription::where('status', 'active')
             ->where('end_time', '<', Carbon::now())
             ->get();
@@ -37,7 +37,7 @@ class MemberManagementController extends Controller
         return view('owner.members', compact('members', 'packages'));
     }
 
-    // Owner directly enrolls member: Set verification = 'verified', default password
+    // Owner directly adds an APPROVED member
     public function store(Request $request)
     {
         $request->validate([
@@ -83,7 +83,7 @@ class MemberManagementController extends Controller
                 'customer_id'         => $customer->id,
                 'member_code'         => $memberCode,
                 'joined_date'         => Carbon::today(),
-                'verification_status' => 'verified', // Directly VERIFIED
+                'verification_status' => 'verified', // Directly Verified
                 'membership_status'   => $hasActivePackage ? 'active' : 'expired',
                 'reward_points'       => 0,
             ]);
@@ -104,21 +104,23 @@ class MemberManagementController extends Controller
                 ]);
             }
 
-            AuditLog::create([
-                'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
-                'user_id'         => auth()->id(),
-                'action'          => "New Member Enrolled and Verified ({$memberCode}) - Default Password Set",
-                'entity_type'     => Member::class,
-                'entity_id'       => $member->id,
-                'validity_period' => $hasActivePackage ? 'Active Plan Attached' : 'No Active Pass',
-                'performed_by'    => 'Owner'
-            ]);
+            if (class_exists(AuditLog::class)) {
+                AuditLog::create([
+                    'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                    'user_id'         => auth()->id(),
+                    'action'          => "New Member Enrolled and Verified ({$memberCode})",
+                    'entity_type'     => Member::class,
+                    'entity_id'       => $member->id,
+                    'validity_period' => $hasActivePackage ? 'Active Plan' : 'No Active Pass',
+                    'performed_by'    => 'Owner'
+                ]);
+            }
         });
 
-        return back()->with('success', 'Member registered with VERIFIED status and active credentials.');
+        return back()->with('success', 'Member created and verified successfully.');
     }
 
-    // 1-Click Approve pending registration to VERIFIED
+    // 1-Click Approve pending member to VERIFIED
     public function approve(Member $member)
     {
         DB::transaction(function () use ($member) {
@@ -130,29 +132,33 @@ class MemberManagementController extends Controller
                 $member->customer->user->update(['account_status' => 'active']);
             }
 
-            AuditLog::create([
-                'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
-                'user_id'         => auth()->id(),
-                'action'          => "Member Account Verified ({$member->member_code})",
-                'entity_type'     => Member::class,
-                'entity_id'       => $member->id,
-                'validity_period' => 'Verified Account',
-                'performed_by'    => 'Owner'
-            ]);
+            if (class_exists(AuditLog::class)) {
+                AuditLog::create([
+                    'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                    'user_id'         => auth()->id(),
+                    'action'          => "Member Account Verified & Approved ({$member->member_code})",
+                    'entity_type'     => Member::class,
+                    'entity_id'       => $member->id,
+                    'validity_period' => 'Verified Account',
+                    'performed_by'    => 'Owner'
+                ]);
+            }
         });
 
         return back()->with('success', "Member {$member->member_code} is now VERIFIED.");
     }
 
+    // Edit Member Profile, Verification Status, Pass Status, & Suspension Reason
     public function update(Request $request, Member $member)
     {
         $request->validate([
-            'first_name'        => 'required|string|max:100',
-            'last_name'         => 'required|string|max:100',
-            'contact_number'    => 'nullable|string|max:30',
-            'membership_status' => 'required|in:active,expired,suspended',
-            'suspension_reason' => 'nullable|required_if:membership_status,suspended|string|max:255',
-            'end_date'          => 'nullable|date',
+            'first_name'          => 'required|string|max:100',
+            'last_name'           => 'required|string|max:100',
+            'contact_number'      => 'nullable|string|max:30',
+            'verification_status' => 'required|in:pending,verified',
+            'membership_status'   => 'required|in:active,expired,suspended',
+            'suspension_reason'   => 'nullable|required_if:membership_status,suspended|string|max:255',
+            'end_date'            => 'nullable|date',
         ]);
 
         DB::transaction(function () use ($request, $member) {
@@ -165,9 +171,16 @@ class MemberManagementController extends Controller
             }
 
             $member->update([
-                'membership_status' => $request->membership_status,
-                'suspension_reason' => $request->membership_status === 'suspended' ? $request->suspension_reason : null,
+                'verification_status' => $request->verification_status,
+                'membership_status'   => $request->membership_status,
+                'suspension_reason'   => $request->membership_status === 'suspended' ? $request->suspension_reason : null,
             ]);
+
+            if ($member->customer && $member->customer->user) {
+                $member->customer->user->update([
+                    'account_status' => $request->verification_status === 'verified' ? 'active' : 'pending'
+                ]);
+            }
 
             if ($request->filled('end_date') && $member->latestSubscription) {
                 $member->latestSubscription->update([
@@ -176,16 +189,19 @@ class MemberManagementController extends Controller
                 ]);
             }
 
-            AuditLog::create([
-                'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
-                'user_id'         => auth()->id(),
-                'action'          => "Member Profile Updated ({$member->member_code}) - Pass Status: " . strtoupper($request->membership_status) . ($request->membership_status === 'suspended' ? " | Reason: {$request->suspension_reason}" : ""),
-                'entity_type'     => Member::class,
-                'entity_id'       => $member->id,
-                'performed_by'    => 'Owner'
-            ]);
+            if (class_exists(AuditLog::class)) {
+                $auditData = [
+                    'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                    'user_id'         => auth()->id(),
+                    'action'          => "Member Profile Updated ({$member->member_code}) - Verified: {$request->verification_status} | Pass: {$request->membership_status}" . ($request->membership_status === 'suspended' ? " | Reason: {$request->suspension_reason}" : ""),
+                    'entity_type'     => Member::class,
+                    'entity_id'       => $member->id,
+                    'performed_by'    => 'Owner'
+                ];
+                AuditLog::create($auditData);
+            }
         });
 
-        return back()->with('success', "Member {$member->member_code} updated.");
+        return back()->with('success', "Member {$member->member_code} details updated successfully.");
     }
 }

@@ -10,22 +10,18 @@ class Member extends Model
     use HasFactory;
 
     protected $table = 'members';
-
-    protected $fillable = [
-        'customer_id',
-        'member_code',      // E.g., ECO-001
-        'joined_date',
-        'membership_status',// 'active', 'expired', 'pending', 'cancelled'
-        'medical_notes',
-    ];
+    
+    // Allows all attributes (verification_status, suspension_reason, reward_points) to save
+    protected $guarded = [];
 
     protected $casts = [
-        'joined_date' => 'date',
+        'joined_date'   => 'date',
+        'reward_points' => 'integer',
     ];
 
     public function customer()
     {
-        return $this->belongsTo(Customer::class);
+        return $this->belongsTo(Customer::class, 'customer_id');
     }
 
     public function subscriptions()
@@ -45,7 +41,7 @@ class Member extends Model
 
     public function attendances()
     {
-        return $this->hasMany(Attendance::class);
+        return $this->hasMany(Attendance::class)->orderBy('attendance_date', 'desc')->orderBy('check_in_time', 'desc');
     }
 
     public function gymNotes()
