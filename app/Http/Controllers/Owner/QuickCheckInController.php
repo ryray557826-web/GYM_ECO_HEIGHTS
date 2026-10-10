@@ -12,9 +12,13 @@ use App\Models\PaymentMethod;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-    
+
 class QuickCheckInController extends Controller
 {
+    /**
+     * Search member by Member ID and strictly verify if they hold
+     * an active subscription that is MONTHLY OR LONGER (>= 28 days)
+     */
     public function search(Request $request)
     {
         $query = strtoupper(trim($request->member_id));
@@ -31,27 +35,42 @@ class QuickCheckInController extends Controller
         }
 
         $subscription = $member->latestSubscription;
-        $isMonthlyActive = $subscription && 
-                           $subscription->status === 'active' && 
-                           Carbon::parse($subscription->end_time)->isFuture();
+        $package = $subscription ? $subscription->package : null;
+
+        // Strict Check: Must be active, unexpired, AND duration must be MONTHLY OR LONGER (>= 28 days)
+        $isMonthlyOrMoreActive = $subscription && 
+                                 $subscription->status === 'active' && 
+                                 $package && 
+                                 ($package->duration_in_days >= 28 || in_array($package->plan_type, ['monthly', 'quarterly', 'yearly', 'annual'])) &&
+                                 Carbon::parse($subscription->end_time)->isFuture();
+
+        $planTypeName = 'Walk-In';
+        if ($package) {
+            $planTypeName = $package->name . ' (' . ucfirst($package->plan_type) . ')';
+        }
 
         return response()->json([
             'success' => true,
             'member' => [
-                'id' => $member->id,
-                'customer_id' => $member->customer_id,
-                'member_id' => $member->member_code,
-                'name' => $member->customer->full_name,
-                'contact' => $member->customer->contact_number ?? 'No contact provided',
-                'has_active_monthly' => $isMonthlyActive,
-                'reward_points' => $member->reward_points ?? 0,
-                'plan_type' => $subscription && $subscription->package ? $subscription->package->name : 'Walk-In',
-                'expires_at' => $subscription ? Carbon::parse($subscription->end_time)->format('Y-m-d H:i') : 'N/A',
-                'status' => $isMonthlyActive ? 'ACTIVE' : ($subscription && $subscription->status === 'expired' ? 'EXPIRED' : 'NO PLAN')
+                'id'                 => $member->id,
+                'customer_id'        => $member->customer_id,
+                'member_id'          => $member->member_code,
+                'name'               => $member->customer ? $member->customer->full_name : 'No Name',
+                'contact'            => $member->customer->contact_number ?? 'No contact provided',
+                'has_active_monthly' => $isMonthlyOrMoreActive, // Strictly true ONLY if monthly or longer
+                'reward_points'      => $member->reward_points ?? 0,
+                'plan_type'          => $planTypeName,
+                'expires_at'         => ($subscription && Carbon::parse($subscription->end_time)->isFuture()) 
+                                            ? Carbon::parse($subscription->end_time)->format('Y-m-d H:i') 
+                                            : 'No active subscription',
+                'status'             => $isMonthlyOrMoreActive ? 'ACTIVE PASS' : ($subscription && $subscription->status === 'expired' ? 'EXPIRED' : 'NO ACTIVE PASS')
             ]
         ]);
     }
-// Confirm ₱50 Paid Entry (Cash or GCash with Reference Number) + Award 3 Points
+
+    /**
+     * Confirm ₱50 Paid Entry (Cash or GCash with Reference Number) + Award 3 Points
+     */
     public function confirmPerSession(Request $request)
     {
         $request->validate([
@@ -64,7 +83,6 @@ class QuickCheckInController extends Controller
             $member = Member::with('customer')->findOrFail($request->member_id);
             $methodCode = $request->payment_method ?? 'cash';
             
-            // Resolve payment method (Cash vs GCash)
             if ($methodCode === 'gcash') {
                 $method = PaymentMethod::firstOrCreate(
                     ['code' => 'gcash'],
@@ -80,7 +98,6 @@ class QuickCheckInController extends Controller
             $today = Carbon::today()->toDateString();
             $now = Carbon::now()->toTimeString();
 
-            // 1. Record verified ₱50 payment
             $payment = Payment::create([
                 'payment_code'      => 'PAY-' . Carbon::now()->format('YmdHis'),
                 'customer_id'       => $member->customer_id,
@@ -94,7 +111,6 @@ class QuickCheckInController extends Controller
                 'verified_by'       => auth()->id()
             ]);
 
-            // 2. Recognize in Revenue Ledger
             Revenue::create([
                 'revenue_code' => 'REV-' . $payment->id,
                 'payment_id'   => $payment->id,
@@ -102,7 +118,6 @@ class QuickCheckInController extends Controller
                 'revenue_date' => $today
             ]);
 
-            // 3. Log Attendance
             Attendance::create([
                 'customer_id'     => $member->customer_id,
                 'member_id'       => $member->id,
@@ -112,10 +127,9 @@ class QuickCheckInController extends Controller
                 'entry_type'      => 'per_session'
             ]);
 
-            // 4. Award 3 Reward Points for Daily Session
+            // Daily payment awards 3 points
             $member->increment('reward_points', 3);
 
-            // 5. Audit Log (Mentions GCash & Ref Number if present)
             $methodLabel = ($methodCode === 'gcash') 
                 ? "GCash" . ($request->reference_number ? " (Ref: {$request->reference_number})" : "") 
                 : "Cash";
@@ -136,22 +150,47 @@ class QuickCheckInController extends Controller
             ]);
         });
     }
+
+    /**
+     * Confirm Monthly Free Check-in (₱0) - Strictly for Monthly or Longer members
+     */
     public function confirmMonthly(Request $request)
     {
         $request->validate(['member_id' => 'required|exists:members,id']);
-        $member = Member::with('customer')->findOrFail($request->member_id);
+        $member = Member::with(['customer', 'latestSubscription.package'])->findOrFail($request->member_id);
+
+        $subscription = $member->latestSubscription;
+        $package = $subscription ? $subscription->package : null;
+
+        // Security check: Must hold unexpired monthly or longer subscription
+        if (!$subscription || $subscription->status !== 'active' || !$package || $package->duration_in_days < 28 || Carbon::parse($subscription->end_time)->isPast()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Member does not have an active monthly or longer subscription. Paid entry required.'
+            ], 422);
+        }
 
         Attendance::create([
-            'customer_id' => $member->customer_id,
-            'member_id' => $member->id,
+            'customer_id'     => $member->customer_id,
+            'member_id'       => $member->id,
             'attendance_date' => Carbon::today()->toDateString(),
-            'check_in_time' => Carbon::now()->toTimeString(),
-            'entry_type' => 'membership'
+            'check_in_time'   => Carbon::now()->toTimeString(),
+            'entry_type'      => 'membership'
+        ]);
+
+        AuditLog::create([
+            'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+            'user_id'         => auth()->id(),
+            'action'          => "Active Monthly Pass Check-in logged for {$member->customer->full_name}",
+            'entity_type'     => Member::class,
+            'entity_id'       => $member->id,
+            'validity_period' => 'Member Pass Entry',
+            'performed_by'    => 'Owner'
         ]);
 
         return response()->json([
             'success' => true,
-            'message' => "Monthly member {$member->customer->full_name} checked in successfully!"
+            'message' => "Active pass member {$member->customer->full_name} checked in successfully!"
         ]);
     }
 }

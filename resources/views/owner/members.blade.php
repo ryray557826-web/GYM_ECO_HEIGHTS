@@ -48,18 +48,24 @@
                 </thead>
                 <tbody class="divide-y divide-slate-800 text-slate-300 font-mono">
                     @forelse($members as $m)
+                    @php
+                        $sub = $m->latestSubscription;
+                        $pkg = $sub ? $sub->package : null;
+                        $isSubActive = $sub && $sub->status === 'active' && \Carbon\Carbon::parse($sub->end_time)->isFuture();
+                        $isLongTerm = $isSubActive && $pkg && ($pkg->duration_in_days >= 28 || in_array($pkg->plan_type, ['monthly', 'quarterly', 'yearly', 'annual']));
+                    @endphp
                     <tr class="hover:bg-slate-800/40 transition">
                         <td class="p-3.5 text-emerald-400 font-bold">{{ $m->member_code }}</td>
                         <td class="p-3.5 font-sans font-bold text-white">
                             {{ $m->customer ? $m->customer->full_name : 'No profile' }}
                             @if($m->membership_status === 'suspended' && $m->suspension_reason)
-                                <span class="block text-[10px] text-rose-400 font-normal italic">
+                                <span class="block text-[10px] text-rose-400 font-normal italic font-sans">
                                     Reason: {{ $m->suspension_reason }}
                                 </span>
                             @endif
                         </td>
                         
-                        <!-- 1. ACCOUNT VERIFICATION (Pending vs Verified) -->
+                        <!-- 1. ACCOUNT VERIFICATION STATUS (Pending vs Verified) -->
                         <td class="p-3.5 font-sans">
                             @if(($m->verification_status ?? 'pending') === 'verified')
                                 <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-sky-950 text-sky-400 border border-sky-500/30">VERIFIED</span>
@@ -68,12 +74,14 @@
                             @endif
                         </td>
                         
-                        <!-- 2. PASS ACCESS (Active Pass vs Expired/No Pass vs Suspended) -->
+                        <!-- 2. SPECIFIC PASS ACCESS TIER STATUS -->
                         <td class="p-3.5 font-sans">
-                            @if($m->membership_status === 'active' && $m->latestSubscription && \Carbon\Carbon::parse($m->latestSubscription->end_time)->isFuture())
-                                <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/30">ACTIVE PASS</span>
-                            @elseif($m->membership_status === 'suspended')
+                            @if($m->membership_status === 'suspended')
                                 <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-rose-950 text-rose-300 border border-rose-800/40">SUSPENDED</span>
+                            @elseif($isSubActive && $pkg)
+                                <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/30 uppercase">
+                                    ACTIVE ({{ strtoupper($pkg->plan_type) }})
+                                </span>
                             @else
                                 <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-slate-800 text-slate-400 border border-slate-700">NO ACTIVE PASS</span>
                             @endif
@@ -81,15 +89,15 @@
 
                         <td class="p-3.5 text-emerald-400 font-bold">{{ $m->reward_points ?? 0 }} PTS</td>
                         <td class="p-3.5">
-                            @if($m->latestSubscription && \Carbon\Carbon::parse($m->latestSubscription->end_time)->isFuture())
-                                {{ $m->latestSubscription->end_time->format('Y-m-d') }}
+                            @if($isSubActive && $sub)
+                                {{ $sub->end_time->format('Y-m-d') }}
                             @else
                                 <span class="text-slate-500 font-sans italic text-[11px]">No active subscription</span>
                             @endif
                         </td>
                         <td class="p-3.5">{{ $m->customer ? $m->customer->contact_number : '—' }}</td>
                         <td class="p-3.5 text-right font-sans space-x-2">
-                            <!-- 1-Click Approve button (Appears only when Verification is PENDING) -->
+                            <!-- 1-Click Approve button (Only when Verification is PENDING) -->
                             @if(($m->verification_status ?? 'pending') === 'pending')
                                 <form action="{{ route('owner.members.approve', $m->id) }}" method="POST" class="inline">
                                     @csrf
@@ -98,8 +106,15 @@
                                     </button>
                                 </form>
                             @endif
-                            <button onclick="openEditMemberModal({{ json_encode($m) }}, {{ json_encode($m->customer) }}, '{{ $m->latestSubscription ? $m->latestSubscription->end_time->format('Y-m-d') : '' }}')" 
-                                class="text-xs text-slate-400 hover:text-white underline">
+                            <button onclick="openEditMemberModal(
+                                {{ json_encode($m) }}, 
+                                {{ json_encode($m->customer) }}, 
+                                '{{ $sub ? $sub->end_time->format('Y-m-d') : '' }}',
+                                '{{ $pkg ? $pkg->name : 'No active subscription' }}',
+                                '{{ $pkg ? ucfirst($pkg->plan_type) : 'None' }}',
+                                '{{ $sub ? $sub->start_time->format('M d, Y H:i') : 'N/A' }}',
+                                {{ $isLongTerm ? 1 : 0 }}
+                            )" class="text-xs text-slate-400 hover:text-white underline">
                                 Edit
                             </button>
                         </td>
@@ -141,9 +156,9 @@
             <input type="email" name="email" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white">
         </div>
         <div>
-            <label class="block text-slate-400 mb-1">Account Default Password *</label>
+            <label class="block text-slate-400 mb-1">Default Password *</label>
             <input type="text" name="password" value="pass123" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-mono">
-            <p class="text-[10px] text-slate-500 mt-0.5">The member will use this password to sign in.</p>
+            <p class="text-[10px] text-slate-500 mt-0.5">Visible default password given to the member.</p>
         </div>
         <div class="grid grid-cols-2 gap-3">
             <div>
@@ -179,45 +194,66 @@
     </form>
 </dialog>
 
-<!-- Modal: Edit Member -->
-<dialog id="editMemberModal" class="bg-slate-900 border border-slate-800 text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
+<!-- Modal: Edit Member with Non-Editable Pass Info & Lock Controls -->
+<dialog id="editMemberModal" class="bg-slate-900 border border-slate-800 text-white p-6 rounded-2xl max-w-lg w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-4">
         <div>
-            <span class="text-[10px] uppercase tracking-widest text-emerald-400 font-heading font-bold">EDIT PROFILE</span>
+            <span class="text-[10px] uppercase tracking-widest text-emerald-400 font-heading font-bold">MEMBER DETAILS</span>
             <h3 id="edit_member_title" class="text-sm font-bold text-white"></h3>
         </div>
         <button onclick="document.getElementById('editMemberModal').close()" class="text-slate-400 hover:text-white">✕</button>
     </div>
-    <form id="editMemberForm" method="POST" class="space-y-3 text-xs">
+    
+    <form id="editMemberForm" method="POST" class="space-y-4 text-xs">
         @csrf
+
+        <!-- NON-EDITABLE PASS INFORMATION PANEL -->
+        <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2 font-sans">
+            <span class="text-[10px] uppercase tracking-wider text-slate-400 font-heading font-bold block">CURRENT SUBSCRIPTION DETAILS (READ-ONLY)</span>
+            <div class="grid grid-cols-2 gap-2 text-slate-300">
+                <div>
+                    <span class="text-[11px] text-slate-500 block">Specific Pass Name:</span>
+                    <strong id="display_pass_name" class="text-white text-xs"></strong>
+                </div>
+                <div>
+                    <span class="text-[11px] text-slate-500 block">Pass Tier:</span>
+                    <strong id="display_pass_tier" class="text-emerald-400 text-xs"></strong>
+                </div>
+                <div class="col-span-2">
+                    <span class="text-[11px] text-slate-500 block">Pass Started On:</span>
+                    <span id="display_pass_start" class="text-slate-200 font-mono text-[11px]"></span>
+                </div>
+            </div>
+        </div>
+
         <div class="grid grid-cols-2 gap-3">
             <div>
-                <label class="block text-slate-400 mb-1">First Name</label>
-                <input type="text" name="first_name" id="edit_first_name" required class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white">
+                <label class="block text-slate-400 mb-1">First Name *</label>
+                <input type="text" name="first_name" id="edit_first_name" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white">
             </div>
             <div>
-                <label class="block text-slate-400 mb-1">Last Name</label>
-                <input type="text" name="last_name" id="edit_last_name" required class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white">
+                <label class="block text-slate-400 mb-1">Last Name *</label>
+                <input type="text" name="last_name" id="edit_last_name" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white">
             </div>
         </div>
         <div>
             <label class="block text-slate-400 mb-1">Contact Phone</label>
-            <input type="text" name="contact_number" id="edit_contact" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono">
+            <input type="text" name="contact_number" id="edit_contact" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-mono">
         </div>
 
         <div class="grid grid-cols-2 gap-3">
             <!-- 1. Verification Dropdown -->
             <div>
-                <label class="block text-slate-400 mb-1">Verification Status</label>
-                <select name="verification_status" id="edit_verification_status" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-semibold">
+                <label class="block text-slate-400 mb-1 font-semibold">Verification Status</label>
+                <select name="verification_status" id="edit_verification_status" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-semibold">
                     <option value="verified">Verified</option>
                     <option value="pending">Pending</option>
                 </select>
             </div>
             <!-- 2. Pass Access Dropdown -->
             <div>
-                <label class="block text-slate-400 mb-1">Pass Access Status</label>
-                <select name="membership_status" id="edit_status" onchange="toggleSuspensionField(this.value)" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-semibold">
+                <label class="block text-slate-400 mb-1 font-semibold">Pass Access Status</label>
+                <select name="membership_status" id="edit_status" onchange="toggleSuspensionField(this.value)" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-semibold">
                     <option value="active">Active Pass</option>
                     <option value="expired">Expired / No Pass</option>
                     <option value="suspended">Suspended</option>
@@ -225,9 +261,13 @@
             </div>
         </div>
 
+        <!-- Expiry Date Field -->
         <div>
-            <label class="block text-slate-400 mb-1">Plan Expiry Date</label>
-            <input type="date" name="end_date" id="edit_end_date" onclick="this.showPicker()" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono cursor-pointer">
+            <label class="block text-slate-400 mb-1 font-semibold">Plan Expiry Date</label>
+            <input type="date" name="end_date" id="edit_end_date" onclick="this.showPicker()" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-mono cursor-pointer">
+            <p id="lock_reason_text" class="text-[10px] text-amber-400 mt-1 hidden">
+                * Locked: Pass access and expiry date cannot be modified for daily passes or members without an active monthly/longer subscription.
+            </p>
         </div>
 
         <!-- Conditional Suspension Reason -->
@@ -237,8 +277,8 @@
         </div>
 
         <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
-            <button type="button" onclick="document.getElementById('editMemberModal').close()" class="px-3 py-1.5 border border-slate-800 text-slate-300 rounded">Cancel</button>
-            <button type="submit" class="px-4 py-1.5 bg-emerald-500 text-slate-950 font-extrabold rounded uppercase font-heading">Update Member</button>
+            <button type="button" onclick="document.getElementById('editMemberModal').close()" class="px-3 py-1.5 border border-slate-800 text-slate-300 rounded-lg">Cancel</button>
+            <button type="submit" class="px-4 py-1.5 bg-emerald-500 text-slate-950 font-extrabold rounded-lg uppercase font-heading">Update Member</button>
         </div>
     </form>
 </dialog>
@@ -261,18 +301,43 @@ function toggleSuspensionField(val) {
     }
 }
 
-function openEditMemberModal(member, customer, endDate) {
+function openEditMemberModal(member, customer, endDate, passName, passTier, passStart, isLongTerm) {
     document.getElementById('edit_member_title').innerText = `${customer ? customer.first_name + ' ' + customer.last_name : 'Member'} (${member.member_code})`;
     document.getElementById('edit_first_name').value = customer ? customer.first_name : '';
     document.getElementById('edit_last_name').value = customer ? customer.last_name : '';
     document.getElementById('edit_contact').value = customer ? customer.contact_number : '';
     
+    // Set Non-editable Pass Information
+    document.getElementById('display_pass_name').innerText = passName;
+    document.getElementById('display_pass_tier').innerText = passTier;
+    document.getElementById('display_pass_start').innerText = passStart;
+
     document.getElementById('edit_verification_status').value = member.verification_status || 'pending';
     document.getElementById('edit_status').value = member.membership_status || 'active';
     document.getElementById('edit_end_date').value = endDate || '';
     document.getElementById('edit_suspension_reason').value = member.suspension_reason || '';
     
     toggleSuspensionField(member.membership_status);
+
+    const statusSelect = document.getElementById('edit_status');
+    const endDateInput = document.getElementById('edit_end_date');
+    const lockText = document.getElementById('lock_reason_text');
+
+    // RULE: If member has NO active subscription OR subscription is DAILY (isLongTerm === 0),
+    // they are NOT editable or clickable!
+    if (isLongTerm === 0) {
+        statusSelect.disabled = true;
+        statusSelect.classList.add('opacity-50', 'cursor-not-allowed');
+        endDateInput.disabled = true;
+        endDateInput.classList.add('opacity-50', 'cursor-not-allowed');
+        lockText.classList.remove('hidden');
+    } else {
+        statusSelect.disabled = false;
+        statusSelect.classList.remove('opacity-50', 'cursor-not-allowed');
+        endDateInput.disabled = false;
+        endDateInput.classList.remove('opacity-50', 'cursor-not-allowed');
+        lockText.classList.add('hidden');
+    }
 
     document.getElementById('editMemberForm').action = `/owner/members/${member.id}/update`;
     document.getElementById('editMemberModal').showModal();

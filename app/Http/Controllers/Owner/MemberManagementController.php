@@ -19,7 +19,7 @@ class MemberManagementController extends Controller
 {
     public function index()
     {
-        // Automatically mark unrenewed subscriptions whose validity has passed as expired
+        // Auto-expire unrenewed subscriptions whose validity has passed
         $overdueSubs = MemberSubscription::where('status', 'active')
             ->where('end_time', '<', Carbon::now())
             ->get();
@@ -83,7 +83,7 @@ class MemberManagementController extends Controller
                 'customer_id'         => $customer->id,
                 'member_code'         => $memberCode,
                 'joined_date'         => Carbon::today(),
-                'verification_status' => 'verified', // Directly Verified
+                'verification_status' => 'verified',
                 'membership_status'   => $hasActivePackage ? 'active' : 'expired',
                 'reward_points'       => 0,
             ]);
@@ -148,7 +148,7 @@ class MemberManagementController extends Controller
         return back()->with('success', "Member {$member->member_code} is now VERIFIED.");
     }
 
-    // Edit Member Profile, Verification Status, Pass Status, & Suspension Reason
+    // Update Profile with Strict Long-Term Plan Expiry Check
     public function update(Request $request, Member $member)
     {
         $request->validate([
@@ -156,7 +156,7 @@ class MemberManagementController extends Controller
             'last_name'           => 'required|string|max:100',
             'contact_number'      => 'nullable|string|max:30',
             'verification_status' => 'required|in:pending,verified',
-            'membership_status'   => 'required|in:active,expired,suspended',
+            'membership_status'   => 'nullable|in:active,expired,suspended',
             'suspension_reason'   => 'nullable|required_if:membership_status,suspended|string|max:255',
             'end_date'            => 'nullable|date',
         ]);
@@ -170,11 +170,27 @@ class MemberManagementController extends Controller
                 ]);
             }
 
-            $member->update([
+            // Check if member holds an active subscription that is monthly or longer (>= 28 days)
+            $sub = $member->latestSubscription;
+            $package = $sub ? $sub->package : null;
+            $canModifyPass = $sub && 
+                             $sub->status === 'active' && 
+                             $package && 
+                             ($package->duration_in_days >= 28 || in_array($package->plan_type, ['monthly', 'quarterly', 'yearly', 'annual']));
+
+            $updateData = [
                 'verification_status' => $request->verification_status,
-                'membership_status'   => $request->membership_status,
-                'suspension_reason'   => $request->membership_status === 'suspended' ? $request->suspension_reason : null,
-            ]);
+            ];
+
+            // Only modify membership_status if allowed (monthly+ plan) OR if setting to suspended
+            if ($request->filled('membership_status')) {
+                if ($request->membership_status === 'suspended' || $canModifyPass) {
+                    $updateData['membership_status'] = $request->membership_status;
+                    $updateData['suspension_reason'] = $request->membership_status === 'suspended' ? $request->suspension_reason : null;
+                }
+            }
+
+            $member->update($updateData);
 
             if ($member->customer && $member->customer->user) {
                 $member->customer->user->update([
@@ -182,23 +198,23 @@ class MemberManagementController extends Controller
                 ]);
             }
 
-            if ($request->filled('end_date') && $member->latestSubscription) {
-                $member->latestSubscription->update([
+            // Only update end_date if member has an active monthly or longer subscription
+            if ($canModifyPass && $request->filled('end_date') && $sub) {
+                $sub->update([
                     'end_time' => Carbon::parse($request->end_date)->endOfDay(),
                     'status'   => Carbon::parse($request->end_date)->isPast() ? 'expired' : 'active',
                 ]);
             }
 
             if (class_exists(AuditLog::class)) {
-                $auditData = [
+                AuditLog::create([
                     'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
                     'user_id'         => auth()->id(),
-                    'action'          => "Member Profile Updated ({$member->member_code}) - Verified: {$request->verification_status} | Pass: {$request->membership_status}" . ($request->membership_status === 'suspended' ? " | Reason: {$request->suspension_reason}" : ""),
+                    'action'          => "Member Profile Updated ({$member->member_code}) - Verified: {$request->verification_status}",
                     'entity_type'     => Member::class,
                     'entity_id'       => $member->id,
                     'performed_by'    => 'Owner'
-                ];
-                AuditLog::create($auditData);
+                ]);
             }
         });
 

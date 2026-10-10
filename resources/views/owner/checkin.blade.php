@@ -9,7 +9,7 @@
     <!-- 2. Owner Navigation Tabs -->
     @include('owner._navigation')
 
-    <!-- 3. Check-In Main Grid (12 Columns) -->
+    <!-- 3. Check-In Main Grid -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
         <!-- Left Column: Check-in Box & 6-Month Chart -->
@@ -18,10 +18,9 @@
             <!-- Quick Member Check-In Box -->
             <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl p-6 shadow">
                 <h3 class="text-sm font-heading font-bold uppercase tracking-wider text-white">PER-SESSION CHECK-IN</h3>
-                <p class="text-xs text-gray-400 mt-1 mb-4">Enter a Member ID to look up the member and record an entry.</p>
+                <p class="text-xs text-gray-400 mt-1 mb-4">Enter a Member ID to look up the member and verify admission.</p>
 
                 <div class="flex gap-2">
-                    <!-- Completely blank input without pre-filled text or demo numbers -->
                     <input type="text" id="member_search_id" placeholder="Enter Member ID..." 
                         class="flex-1 bg-[#080d1a] border border-[#1e293b] rounded-lg px-4 py-2.5 text-xs uppercase font-mono text-white focus:outline-none focus:border-[#76c800]"
                         onkeydown="if(event.key === 'Enter') searchMember()">
@@ -32,7 +31,7 @@
                 </div>
             </div>
 
-            <!-- 6-Month Revenue vs Expenses Chart (Directly on Front Page) -->
+            <!-- 6-Month Revenue vs Expenses Chart (Blank/0 when no records exist) -->
             <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl p-6 shadow">
                 <h3 class="text-xs font-heading font-extrabold uppercase tracking-wider text-white mb-4">
                     6-MONTH REVENUE VS EXPENSES
@@ -44,7 +43,7 @@
 
         </div>
 
-        <!-- Right Column: Today's Entries (Table), Recent Entries (Table) & Announcements (Table) -->
+        <!-- Right Column: Today's Entries & Recent Walk-Ins -->
         <div class="lg:col-span-6 space-y-6">
             
             <!-- Tabular: Today's Entries -->
@@ -106,7 +105,7 @@
                             @forelse($recentPerSession ?? [] as $r)
                             <tr>
                                 <td class="py-2 font-sans font-semibold text-white">{{ $r->customer ? $r->customer->full_name : 'Visitor' }}</td>
-                                <td class="py-2">{{ $r->attendance_date ? \Carbon\Carbon::parse($r->attendance_date)->format('Y-m-d') : '2026-09-22' }}</td>
+                                <td class="py-2">{{ \Carbon\Carbon::parse($r->attendance_date)->format('Y-m-d') }}</td>
                                 <td class="py-2">{{ $r->check_in_time }}</td>
                                 <td class="py-2 text-right text-[#76c800] font-bold">₱50</td>
                             </tr>
@@ -120,7 +119,7 @@
                 </div>
             </div>
 
-            <!-- Tabular: Live Gym Announcements Manager for Owner -->
+            <!-- Tabular: Gym Announcements Manager -->
             @php
                 $ownerAnnouncements = \App\Models\Announcement::latest('posted_date')->get();
             @endphp
@@ -166,13 +165,13 @@
                                     <form action="{{ route('owner.announcements.destroy', $oa->id) }}" method="POST" class="inline">
                                         @csrf
                                         @method('DELETE')
-                                        <button type="submit" class="text-red-400 hover:text-red-300 text-xs ml-2" title="Delete Announcement">✕</button>
+                                        <button type="submit" class="text-red-400 hover:text-red-300 text-xs ml-2">✕</button>
                                     </form>
                                 </td>
                             </tr>
                             @empty
                             <tr>
-                                <td colspan="4" class="py-3 text-center text-gray-500 italic">No announcements posted yet. Click "+ Post Announcement" to publish one.</td>
+                                <td colspan="4" class="py-3 text-center text-gray-500 italic">No announcements posted yet.</td>
                             </tr>
                             @endforelse
                         </tbody>
@@ -187,10 +186,7 @@
 </div>
 
 <!-- ========================================================================= -->
-<!-- MODAL: MEMBER FOUND (STRICT SINGLE-BUTTON CHECK-IN LOGIC)                 -->
-<!-- ========================================================================= -->
-<!-- ========================================================================= -->
-<!-- MODAL: MEMBER FOUND (WITH GCASH PAYMENT SELECTOR & REF NUMBER)             -->
+<!-- MODAL: MEMBER FOUND (STRICTLY CHECKS FOR MONTHLY OR LONGER)               -->
 <!-- ========================================================================= -->
 <dialog id="memberFoundModal" class="bg-[#0f172a] border border-[#1e293b] text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-start pb-3 border-b border-[#1e293b]">
@@ -221,21 +217,19 @@
         </div>
     </div>
 
-    <!-- Payment Channel Selection (Shown ONLY if paying ₱50) -->
+    <!-- Payment Channel Selection (Shown ONLY when member must pay ₱50) -->
     <div id="modal_payment_options" class="hidden border-t border-[#1e293b] pt-3 pb-2 space-y-2.5">
         <label class="block text-[11px] font-heading font-bold uppercase tracking-wider text-gray-300">
             Select ₱50 Payment Method:
         </label>
         
         <div class="grid grid-cols-2 gap-2">
-            <!-- Cash Option -->
             <label class="flex items-center space-x-2 bg-[#080d1a] border border-[#1e293b] p-2 rounded-lg cursor-pointer hover:border-[#76c800] transition select-none">
                 <input type="radio" name="checkin_payment_channel" value="cash" checked onchange="toggleGcashRefInput(this.value)"
                     class="text-[#76c800] focus:ring-0">
                 <span class="text-xs font-semibold text-white">💵 Cash (₱50)</span>
             </label>
 
-            <!-- GCash Option -->
             <label class="flex items-center space-x-2 bg-[#080d1a] border border-[#1e293b] p-2 rounded-lg cursor-pointer hover:border-[#76c800] transition select-none">
                 <input type="radio" name="checkin_payment_channel" value="gcash" onchange="toggleGcashRefInput(this.value)"
                     class="text-[#76c800] focus:ring-0">
@@ -243,7 +237,6 @@
             </label>
         </div>
 
-        <!-- GCash Reference Number Input Box -->
         <div id="modal_gcash_ref_box" class="hidden pt-1">
             <label class="block text-[10px] text-gray-400 uppercase font-mono mb-1">
                 GCash Reference Number (Optional)
@@ -253,15 +246,15 @@
         </div>
     </div>
 
-    <!-- Actions Area: STRICTLY ONLY ONE BUTTON DISPLAYED -->
+    <!-- Actions Area: STRICTLY SINGLE BUTTON -->
     <div class="border-t border-[#1e293b] pt-3 space-y-2">
-        <!-- 1. Shown ONLY for active monthly members -->
+        <!-- 1. Shown ONLY if member has an active monthly or longer subscription -->
         <button id="modal_btn_monthly" onclick="processMonthlyCheckin()" 
             class="hidden w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg text-xs uppercase font-heading transition shadow-lg shadow-blue-600/20">
             Check-In As Active Monthly Member (₱0)
         </button>
 
-        <!-- 2. Shown ONLY for expired or per-session members -->
+        <!-- 2. Shown for daily pass holders, expired accounts, or members without a monthly+ plan -->
         <button id="modal_btn_session" onclick="processSessionCheckin()" 
             class="hidden w-full bg-[#76c800] hover:bg-[#68b000] text-black font-extrabold py-2.5 rounded-lg text-xs uppercase font-heading transition shadow-lg shadow-[#76c800]/20">
             Confirm Paid ₱50 & Log Entry
@@ -273,9 +266,8 @@
         </button>
     </div>
 </dialog>
-<!-- ========================================================================= -->
-<!-- MODAL: MEMBER NOT FOUND                                                   -->
-<!-- ========================================================================= -->
+
+<!-- Modal: Member Not Found -->
 <dialog id="memberNotFoundModal" class="bg-[#0f172a] border border-red-900/60 text-white p-6 rounded-2xl max-w-sm w-full shadow-2xl backdrop:bg-black/80">
     <div class="text-center space-y-3">
         <div class="w-12 h-12 rounded-full bg-red-950/70 border border-red-700/60 flex items-center justify-center mx-auto text-xl">
@@ -290,9 +282,7 @@
     </div>
 </dialog>
 
-<!-- ========================================================================= -->
-<!-- MODAL: POST LIVE ANNOUNCEMENT                                            -->
-<!-- ========================================================================= -->
+<!-- Modal: Post Announcement -->
 <dialog id="addAnnouncementModal" class="bg-[#0f172a] border border-[#1e293b] text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-[#1e293b] mb-4">
         <h3 class="text-sm font-heading font-extrabold uppercase tracking-wider text-white">Post New Gym Announcement</h3>
@@ -316,7 +306,7 @@
         </div>
         <div>
             <label class="block text-gray-400 mb-1">Announcement Message *</label>
-            <textarea name="message" rows="3" placeholder="Type announcement here. It will immediately show on all member dashboards..." required 
+            <textarea name="message" rows="3" placeholder="Type announcement here..." required 
                 class="w-full bg-[#080d1a] border border-[#1e293b] rounded p-2 text-white"></textarea>
         </div>
         <div class="flex justify-end gap-2 pt-3 border-t border-[#1e293b]">
@@ -330,8 +320,6 @@
 
 @push('scripts')
 <script>
-// 1. Render 6-Month Bar Chart
-// Dynamic 6-Month Chart (Renders blank/0 when no transactions exist)
 document.addEventListener("DOMContentLoaded", () => {
     const el = document.getElementById('revenueExpensesChartFront');
     if (el) {
@@ -340,18 +328,8 @@ document.addEventListener("DOMContentLoaded", () => {
             data: {
                 labels: {!! json_encode($chartLabels ?? ['May','Jun','Jul','Aug','Sep','Oct']) !!},
                 datasets: [
-                    { 
-                        label: 'Revenue', 
-                        data: {!! json_encode($chartRevenue ?? [0,0,0,0,0,0]) !!}, 
-                        backgroundColor: '#76c800', 
-                        borderRadius: 4 
-                    },
-                    { 
-                        label: 'Expenses', 
-                        data: {!! json_encode($chartExpenses ?? [0,0,0,0,0,0]) !!}, 
-                        backgroundColor: '#dc2626', 
-                        borderRadius: 4 
-                    }
+                    { label: 'Revenue', data: {!! json_encode($chartRevenue ?? [0,0,0,0,0,0]) !!}, backgroundColor: '#76c800', borderRadius: 4 },
+                    { label: 'Expenses', data: {!! json_encode($chartExpenses ?? [0,0,0,0,0,0]) !!}, backgroundColor: '#dc2626', borderRadius: 4 }
                 ]
             },
             options: {
@@ -366,10 +344,9 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 });
+
 let activeLookupMember = null;
 
-// 2. Member ID Lookup with Strict Single-Button Logic
-// Toggle GCash Reference Box
 function toggleGcashRefInput(method) {
     const refBox = document.getElementById('modal_gcash_ref_box');
     if (method === 'gcash') {
@@ -380,7 +357,6 @@ function toggleGcashRefInput(method) {
     }
 }
 
-// Search Member
 function searchMember() {
     const id = document.getElementById('member_search_id').value.trim();
     if(!id) return;
@@ -407,24 +383,23 @@ function searchMember() {
             const btnSession = document.getElementById('modal_btn_session');
             const paymentOptions = document.getElementById('modal_payment_options');
 
-            // Reset inputs
             document.querySelector('input[name="checkin_payment_channel"][value="cash"]').checked = true;
             document.getElementById('modal_gcash_ref_box').classList.add('hidden');
             document.getElementById('checkin_gcash_ref').value = '';
 
-            // STRICT MUTUALLY EXCLUSIVE LOGIC
+            // STRICT VERIFICATION: Free check-in ONLY if active plan is Monthly or Longer
             if (activeLookupMember.has_active_monthly) {
                 badge.innerText = "ACTIVE PASS";
                 badge.className = "px-2.5 py-1 text-xs font-bold rounded bg-emerald-950 text-[#76c800] border border-[#76c800]/40";
-                btnMonthly.classList.remove('hidden'); // Show ONLY ₱0 check-in
+                btnMonthly.classList.remove('hidden');
                 btnSession.classList.add('hidden');
-                paymentOptions.classList.add('hidden'); // No payment needed
+                paymentOptions.classList.add('hidden');
             } else {
-                badge.innerText = activeLookupMember.status || 'EXPIRED';
+                badge.innerText = activeLookupMember.status || 'NO ACTIVE PASS';
                 badge.className = "px-2.5 py-1 text-xs font-bold rounded bg-red-950 text-red-400 border border-red-800/40";
-                btnSession.classList.remove('hidden'); // Show ONLY ₱50 check-in
+                btnSession.classList.remove('hidden');
                 btnMonthly.classList.add('hidden');
-                paymentOptions.classList.remove('hidden'); // Show Cash vs GCash options
+                paymentOptions.classList.remove('hidden');
             }
 
             document.getElementById('memberFoundModal').showModal();
@@ -439,10 +414,8 @@ function searchMember() {
     });
 }
 
-// Confirm ₱50 Paid Entry (Sends Cash vs GCash + Reference Number)
 function processSessionCheckin() {
     if(!activeLookupMember) return;
-
     const selectedChannel = document.querySelector('input[name="checkin_payment_channel"]:checked').value;
     const gcashRef = document.getElementById('checkin_gcash_ref').value.trim();
 
@@ -456,13 +429,13 @@ function processSessionCheckin() {
         })
     }).then(() => location.reload());
 }
-// 4. Confirm Monthly Free Entry (₱0)
+
 function processMonthlyCheckin() {
     if(!activeLookupMember) return;
     fetch("{{ route('owner.quickCheckIn.monthly') }}", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-TOKEN": "{{ csrf_token() }}" },
-        body: JSON.stringify({ member_id: activeLookupMember.id })
+        body: JSON.stringify({ user_id: activeLookupMember.id })
     }).then(() => location.reload());
 }
 </script>
