@@ -20,11 +20,12 @@ class PaymentApprovalController extends Controller
     public function index()
     {
         $members = Member::with('customer')->get();
+        $packages = Package::where('is_active', true)->get();
         $paymentMethods = PaymentMethod::all();
         $pendingPayments = Payment::where('status', 'pending')->with(['customer', 'member'])->latest()->get();
         $payments = Payment::with(['customer', 'member', 'method'])->latest()->paginate(20);
 
-        return view('owner.payments', compact('members', 'paymentMethods', 'pendingPayments', 'payments'));
+        return view('owner.payments', compact('members', 'packages', 'paymentMethods', 'pendingPayments', 'payments'));
     }
 
     public function verify(Payment $payment)
@@ -36,7 +37,6 @@ class PaymentApprovalController extends Controller
                 'verified_by' => auth()->id()
             ]);
 
-            // 1. Recognize revenue
             Revenue::create([
                 'revenue_code' => 'REV-' . $payment->id,
                 'payment_id'   => $payment->id,
@@ -44,35 +44,31 @@ class PaymentApprovalController extends Controller
                 'revenue_date' => Carbon::today()->toDateString()
             ]);
 
-            // 2. Resolve member and calculate points dynamically
             $member = $payment->member ?? ($payment->customer ? $payment->customer->member : null);
-
             $daysToAdd = 30;
-            $pointsAwarded = 15; // default 1 month
+            $pointsAwarded = 15;
 
             if ($payment->member_subscription_id && $payment->subscription && $payment->subscription->package) {
                 $pkg = $payment->subscription->package;
                 $daysToAdd = $pkg->duration_in_days;
 
                 if ($daysToAdd >= 365 || $payment->amount >= 7000) {
-                    $pointsAwarded = 180; // Yearly: 15 pts x 12
+                    $pointsAwarded = 180;
                 } elseif ($daysToAdd >= 90 || $payment->amount >= 2000) {
-                    $pointsAwarded = 45;  // Quarterly: 15 pts x 3
+                    $pointsAwarded = 45;
                 } else {
-                    $pointsAwarded = 15;  // Monthly
+                    $pointsAwarded = 15;
                 }
             } elseif ($payment->payment_type === 'per_session' || $payment->amount <= 50) {
-                $pointsAwarded = 3;       // Daily session
+                $pointsAwarded = 3;
                 $daysToAdd = 1;
             }
 
-            // Award points directly to member
             if ($member) {
                 $member->increment('reward_points', $pointsAwarded);
                 $member->update(['membership_status' => 'active']);
             }
 
-            // 3. Extend or activate subscription
             if ($payment->member_subscription_id && $payment->subscription) {
                 $payment->subscription->update([
                     'start_time' => Carbon::now(),
@@ -81,12 +77,11 @@ class PaymentApprovalController extends Controller
                 ]);
             }
 
-            // 4. Log to Audit Trail
             if (class_exists(AuditLog::class)) {
                 $auditData = [
                     'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
                     'user_id'         => auth()->id(),
-                    'action'          => "Payment #{$payment->payment_code} Approved (₱{$payment->amount}) & +{$pointsAwarded} PTS credited",
+                    'action'          => "Payment #{$payment->payment_code} Verified (₱{$payment->amount}) & +{$pointsAwarded} PTS credited",
                     'validity_period' => "{$daysToAdd} Days",
                     'performed_by'    => 'Owner'
                 ];
@@ -110,25 +105,26 @@ class PaymentApprovalController extends Controller
     {
         $request->validate([
             'member_id'         => 'required|exists:members,id',
-            'plan_type'         => 'required|in:monthly,quarterly,yearly,per_session',
-            'amount'            => 'required|numeric|min:1',
+            'package_id'        => 'required|exists:packages,id',
             'payment_method_id' => 'required|exists:payment_methods,id',
             'reference_number'  => 'nullable|string'
         ]);
 
         DB::transaction(function () use ($request) {
             $member = Member::with('customer')->findOrFail($request->member_id);
+            $package = Package::findOrFail($request->package_id);
             $paymentCode = 'PAY-' . Carbon::now()->format('YmdHis');
 
-            $isSubscription = in_array($request->plan_type, ['monthly', 'quarterly', 'yearly']);
+            $isDaily = $package->plan_type === 'daily';
+            $amount = $package->price; // FIXED AMOUNT
 
             $payment = Payment::create([
                 'payment_code'      => $paymentCode,
                 'customer_id'       => $member->customer_id,
                 'member_id'         => $member->id,
                 'payment_method_id' => $request->payment_method_id,
-                'amount'            => $request->amount,
-                'payment_type'      => $isSubscription ? 'monthly_subscription' : 'per_session',
+                'amount'            => $amount,
+                'payment_type'      => $isDaily ? 'per_session' : 'monthly_subscription',
                 'reference_number'  => $request->reference_number,
                 'status'            => 'verified',
                 'verified_at'       => Carbon::now(),
@@ -138,52 +134,35 @@ class PaymentApprovalController extends Controller
             Revenue::create([
                 'revenue_code' => 'REV-' . $payment->id,
                 'payment_id'   => $payment->id,
-                'amount'       => $request->amount,
+                'amount'       => $amount,
                 'revenue_date' => Carbon::today()->toDateString()
             ]);
 
-            // Calculate points and validity days based on schedule
-            $pointsAwarded = 3;
-            $daysToAdd = 1;
+            // Points allocation
+            $pointsAwarded = 15;
+            if ($package->duration_in_days >= 365) $pointsAwarded = 180;
+            elseif ($package->duration_in_days >= 90) $pointsAwarded = 45;
+            elseif ($isDaily) $pointsAwarded = 3;
 
-            if ($request->plan_type === 'yearly' || $request->amount >= 7000) {
-                $pointsAwarded = 180;
-                $daysToAdd = 365;
-            } elseif ($request->plan_type === 'quarterly' || $request->amount >= 2000) {
-                $pointsAwarded = 45;
-                $daysToAdd = 90;
-            } elseif ($request->plan_type === 'monthly' || $request->amount >= 700) {
-                $pointsAwarded = 15;
-                $daysToAdd = 30;
-            }
-
-            // Award points
             $member->increment('reward_points', $pointsAwarded);
             $member->update(['membership_status' => 'active']);
 
-            if ($isSubscription) {
-                $pkg = Package::firstOrCreate(
-                    ['plan_type' => $request->plan_type],
-                    ['package_code' => 'PKG-' . strtoupper($request->plan_type), 'name' => ucfirst($request->plan_type) . ' Pass', 'price' => $request->amount, 'duration_in_days' => $daysToAdd]
-                );
+            $sub = MemberSubscription::create([
+                'member_id'  => $member->id,
+                'package_id' => $package->id,
+                'start_time' => Carbon::now(),
+                'end_time'   => Carbon::now()->addDays($package->duration_in_days),
+                'status'     => 'active'
+            ]);
 
-                $sub = MemberSubscription::create([
-                    'member_id'  => $member->id,
-                    'package_id' => $pkg->id,
-                    'start_time' => Carbon::now(),
-                    'end_time'   => Carbon::now()->addDays($daysToAdd),
-                    'status'     => 'active'
-                ]);
-
-                $payment->update(['member_subscription_id' => $sub->id]);
-            }
+            $payment->update(['member_subscription_id' => $sub->id]);
 
             if (class_exists(AuditLog::class)) {
                 $auditData = [
                     'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
                     'user_id'         => auth()->id(),
-                    'action'          => "Manual Payment (₱{$request->amount}) logged with +{$pointsAwarded} PTS for {$member->customer->full_name}",
-                    'validity_period' => "{$daysToAdd} Days",
+                    'action'          => "Manual Payment for {$package->name} (₱{$amount}) with +{$pointsAwarded} PTS credited",
+                    'validity_period' => "{$package->duration_in_days} Days",
                     'performed_by'    => 'Owner'
                 ];
                 if (Schema::hasColumn('audit_logs', 'entity_type')) $auditData['entity_type'] = Payment::class;
@@ -193,6 +172,6 @@ class PaymentApprovalController extends Controller
             }
         });
 
-        return back()->with('success', 'Manual payment logged, points credited, and membership activated.');
+        return back()->with('success', 'Manual payment logged with fixed rate, points credited, and pass activated.');
     }
 }

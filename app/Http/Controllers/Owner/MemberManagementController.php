@@ -19,12 +19,25 @@ class MemberManagementController extends Controller
 {
     public function index()
     {
+        // Auto-expire any overdue daily or monthly subscriptions
+        $overdueSubs = MemberSubscription::where('status', 'active')
+            ->where('end_time', '<', Carbon::now())
+            ->get();
+
+        foreach ($overdueSubs as $sub) {
+            $sub->update(['status' => 'expired']);
+            if ($sub->member && $sub->member->membership_status !== 'suspended') {
+                $sub->member->update(['membership_status' => 'expired']);
+            }
+        }
+
         $members = Member::with(['customer', 'latestSubscription.package'])->get();
         $packages = Package::where('is_active', true)->get();
+
         return view('owner.members', compact('members', 'packages'));
     }
 
-    // Direct addition by Owner: Account is AUTO-APPROVED
+    // Owner directly enrolls member: Set verification = 'verified', default password
     public function store(Request $request)
     {
         $request->validate([
@@ -39,11 +52,13 @@ class MemberManagementController extends Controller
         ]);
 
         DB::transaction(function () use ($request) {
+            $rawPassword = $request->filled('password') ? $request->password : 'pass123';
+
             $user = User::create([
                 'email'             => strtolower($request->email),
-                'password'          => Hash::make($request->password ?? 'pass123'),
+                'password'          => Hash::make($rawPassword),
                 'role'              => 'member',
-                'account_status'    => 'active', // Pre-approved by Owner
+                'account_status'    => 'active',
                 'email_verified_at' => Carbon::now(),
             ]);
 
@@ -56,18 +71,21 @@ class MemberManagementController extends Controller
                 'contact_number'          => $request->contact_number,
                 'date_of_birth'           => $request->date_of_birth,
                 'age'                     => $dob ? $dob->age : null,
-                'address'                 => $request->address ?? 'Davao City',
+                'address'                 => $request->address ?? 'Toril, Davao City',
             ]);
 
             $count = Member::count() + 1;
             $memberCode = 'ECO-' . str_pad($count, 3, '0', STR_PAD_LEFT);
 
+            $hasActivePackage = $request->filled('package_id');
+
             $member = Member::create([
-                'customer_id'       => $customer->id,
-                'member_code'       => $memberCode,
-                'joined_date'       => Carbon::today(),
-                'membership_status' => 'active', // Pre-approved by Owner
-                'reward_points'     => 0,
+                'customer_id'         => $customer->id,
+                'member_code'         => $memberCode,
+                'joined_date'         => Carbon::today(),
+                'verification_status' => 'verified', // Directly VERIFIED
+                'membership_status'   => $hasActivePackage ? 'active' : 'expired',
+                'reward_points'       => 0,
             ]);
 
             if (Schema::hasColumn('users', 'member_id')) {
@@ -75,7 +93,7 @@ class MemberManagementController extends Controller
                 $user->save();
             }
 
-            if ($request->filled('package_id')) {
+            if ($hasActivePackage) {
                 $package = Package::find($request->package_id);
                 MemberSubscription::create([
                     'member_id'  => $member->id,
@@ -89,22 +107,25 @@ class MemberManagementController extends Controller
             AuditLog::create([
                 'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
                 'user_id'         => auth()->id(),
-                'action'          => "New Member Enrolled and Pre-Approved ({$memberCode})",
+                'action'          => "New Member Enrolled and Verified ({$memberCode}) - Default Password Set",
                 'entity_type'     => Member::class,
                 'entity_id'       => $member->id,
-                'validity_period' => 'Pre-Approved',
+                'validity_period' => $hasActivePackage ? 'Active Plan Attached' : 'No Active Pass',
                 'performed_by'    => 'Owner'
             ]);
         });
 
-        return back()->with('success', 'Member created and approved successfully.');
+        return back()->with('success', 'Member registered with VERIFIED status and active credentials.');
     }
 
-    // 1-Click Approve pending member
+    // 1-Click Approve pending registration to VERIFIED
     public function approve(Member $member)
     {
         DB::transaction(function () use ($member) {
-            $member->update(['membership_status' => 'active']);
+            $member->update([
+                'verification_status' => 'verified'
+            ]);
+
             if ($member->customer && $member->customer->user) {
                 $member->customer->user->update(['account_status' => 'active']);
             }
@@ -112,15 +133,15 @@ class MemberManagementController extends Controller
             AuditLog::create([
                 'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
                 'user_id'         => auth()->id(),
-                'action'          => "Pending Member Verified & Approved ({$member->member_code})",
+                'action'          => "Member Account Verified ({$member->member_code})",
                 'entity_type'     => Member::class,
                 'entity_id'       => $member->id,
-                'validity_period' => 'Approved',
+                'validity_period' => 'Verified Account',
                 'performed_by'    => 'Owner'
             ]);
         });
 
-        return back()->with('success', "Member {$member->member_code} is now verified and approved.");
+        return back()->with('success', "Member {$member->member_code} is now VERIFIED.");
     }
 
     public function update(Request $request, Member $member)
@@ -129,7 +150,8 @@ class MemberManagementController extends Controller
             'first_name'        => 'required|string|max:100',
             'last_name'         => 'required|string|max:100',
             'contact_number'    => 'nullable|string|max:30',
-            'membership_status' => 'required|in:active,expired,pending,suspended',
+            'membership_status' => 'required|in:active,expired,suspended',
+            'suspension_reason' => 'nullable|required_if:membership_status,suspended|string|max:255',
             'end_date'          => 'nullable|date',
         ]);
 
@@ -142,7 +164,10 @@ class MemberManagementController extends Controller
                 ]);
             }
 
-            $member->update(['membership_status' => $request->membership_status]);
+            $member->update([
+                'membership_status' => $request->membership_status,
+                'suspension_reason' => $request->membership_status === 'suspended' ? $request->suspension_reason : null,
+            ]);
 
             if ($request->filled('end_date') && $member->latestSubscription) {
                 $member->latestSubscription->update([
@@ -150,6 +175,15 @@ class MemberManagementController extends Controller
                     'status'   => Carbon::parse($request->end_date)->isPast() ? 'expired' : 'active',
                 ]);
             }
+
+            AuditLog::create([
+                'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                'user_id'         => auth()->id(),
+                'action'          => "Member Profile Updated ({$member->member_code}) - Pass Status: " . strtoupper($request->membership_status) . ($request->membership_status === 'suspended' ? " | Reason: {$request->suspension_reason}" : ""),
+                'entity_type'     => Member::class,
+                'entity_id'       => $member->id,
+                'performed_by'    => 'Owner'
+            ]);
         });
 
         return back()->with('success', "Member {$member->member_code} updated.");

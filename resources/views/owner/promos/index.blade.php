@@ -5,6 +5,14 @@
     @include('owner._top_stats')
     @include('owner._navigation')
 
+    <!-- Flash Notifications -->
+    @if(session('success'))
+        <div class="bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between">
+            <span>✓ {{ session('success') }}</span>
+            <button onclick="this.parentElement.remove()" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+    @endif
+
     <!-- Top Action Bar -->
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
@@ -57,6 +65,9 @@
                         </span>
                     </td>
                     <td class="p-3.5 text-right space-x-2">
+                        <button onclick="openEditPromoModal({{ json_encode($pkg) }})" class="text-xs text-slate-300 hover:text-white underline">
+                            Edit
+                        </button>
                         <form action="{{ route('owner.promos.toggle', $pkg->id) }}" method="POST" class="inline">
                             @csrf
                             <button type="submit" class="text-xs {{ $pkg->is_active ? 'text-amber-400 hover:text-amber-300' : 'text-emerald-400 hover:text-emerald-300' }}">
@@ -142,4 +153,79 @@
         </div>
     </form>
 </dialog>
+
+<!-- Modal: Edit Promo / Plan -->
+<dialog id="editPromoModal" class="bg-slate-900 border border-slate-800 text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
+    <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-4">
+        <h3 class="text-sm font-heading font-extrabold uppercase tracking-wider text-white">Edit Gym Package / Promo</h3>
+        <button onclick="document.getElementById('editPromoModal').close()" class="text-slate-400 hover:text-white">✕</button>
+    </div>
+    <form id="editPromoForm" method="POST" class="space-y-3.5 text-xs">
+        @csrf
+        <div>
+            <label class="block text-slate-400 mb-1 font-semibold">Package / Promo Name *</label>
+            <input type="text" name="name" id="edit_pkg_name" required 
+                class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+            <div>
+                <label class="block text-slate-400 mb-1 font-semibold">Plan Category *</label>
+                <select name="plan_type" id="edit_pkg_type" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white">
+                    <option value="monthly">Monthly</option>
+                    <option value="quarterly">Quarterly</option>
+                    <option value="yearly">Yearly</option>
+                    <option value="daily">Daily Walk-In</option>
+                    <option value="special_promo">Special Promo</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-slate-400 mb-1 font-semibold">Rate (₱) *</label>
+                <input type="number" step="0.01" name="price" id="edit_pkg_price" required 
+                    class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white font-mono">
+            </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+            <div>
+                <label class="block text-slate-400 mb-1 font-semibold">Duration (in Days) *</label>
+                <input type="number" name="duration_in_days" id="edit_pkg_days" min="1" required 
+                    class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white font-mono">
+            </div>
+            <div>
+                <label class="block text-slate-400 mb-1 font-semibold">Promo Badge Tag</label>
+                <input type="text" name="promo_badge" id="edit_pkg_badge" 
+                    class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white font-mono">
+            </div>
+        </div>
+        <div>
+            <label class="block text-slate-400 mb-1 font-semibold">Description</label>
+            <textarea name="description" id="edit_pkg_desc" rows="2" 
+                class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white"></textarea>
+        </div>
+        <div class="flex items-center space-x-2 pt-1">
+            <input type="checkbox" name="is_promo" id="edit_pkg_is_promo" value="1" class="rounded bg-slate-950 border-slate-800 text-emerald-500">
+            <label for="edit_pkg_is_promo" class="text-slate-300">Highlight as active promotional offer</label>
+        </div>
+        <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <button type="button" onclick="document.getElementById('editPromoModal').close()" class="px-3.5 py-2 border border-slate-800 text-slate-300 rounded-lg">Cancel</button>
+            <button type="submit" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold rounded-lg uppercase font-heading">Update Package</button>
+        </div>
+    </form>
+</dialog>
+
+@push('scripts')
+<script>
+function openEditPromoModal(pkg) {
+    document.getElementById('edit_pkg_name').value = pkg.name;
+    document.getElementById('edit_pkg_type').value = pkg.plan_type;
+    document.getElementById('edit_pkg_price').value = pkg.price;
+    document.getElementById('edit_pkg_days').value = pkg.duration_in_days;
+    document.getElementById('edit_pkg_badge').value = pkg.promo_badge || '';
+    document.getElementById('edit_pkg_desc').value = pkg.description || '';
+    document.getElementById('edit_pkg_is_promo').checked = !!pkg.is_promo;
+
+    document.getElementById('editPromoForm').action = `/owner/promos/${pkg.id}/update`;
+    document.getElementById('editPromoModal').showModal();
+}
+</script>
+@endpush
 @endsection

@@ -30,8 +30,8 @@
                     <tr>
                         <th class="p-3.5">ID</th>
                         <th class="p-3.5">NAME</th>
-                        <th class="p-3.5">TYPE</th>
-                        <th class="p-3.5">STATUS</th>
+                        <th class="p-3.5">VERIFICATION</th>
+                        <th class="p-3.5">PASS ACCESS</th>
                         <th class="p-3.5">REWARD PTS</th>
                         <th class="p-3.5">EXPIRES</th>
                         <th class="p-3.5">CONTACT</th>
@@ -42,27 +42,46 @@
                     @forelse($members as $m)
                     <tr class="hover:bg-slate-800/40 transition">
                         <td class="p-3.5 text-emerald-400 font-bold">{{ $m->member_code }}</td>
-                        <td class="p-3.5 font-sans font-bold text-white">{{ $m->customer ? $m->customer->full_name : 'No profile' }}</td>
-                        <td class="p-3.5 font-sans text-slate-400">
-                            {{ $m->latestSubscription && $m->latestSubscription->package ? $m->latestSubscription->package->name : 'Walk-In' }}
+                        <td class="p-3.5 font-sans font-bold text-white">
+                            {{ $m->customer ? $m->customer->full_name : 'No profile' }}
+                            @if($m->membership_status === 'suspended' && $m->suspension_reason)
+                                <span class="block text-[10px] text-rose-400 font-normal italic">
+                                    Reason: {{ $m->suspension_reason }}
+                                </span>
+                            @endif
                         </td>
+                        <!-- 1. ACCOUNT VERIFICATION STATUS (Pending vs Verified) -->
                         <td class="p-3.5 font-sans">
-                            @if($m->membership_status === 'active')
-                                <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/30">ACTIVE</span>
-                            @elseif($m->membership_status === 'expired')
-                                <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-rose-950 text-rose-400 border border-rose-800/30">EXPIRED</span>
+                            @if(($m->verification_status ?? 'pending') === 'verified')
+                                <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-sky-950 text-sky-400 border border-sky-500/30">VERIFIED</span>
                             @else
-                                <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-amber-950 text-amber-400 border border-amber-800/30">PENDING APPROVAL</span>
+                                <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-amber-950 text-amber-400 border border-amber-800/30">PENDING</span>
+                            @endif
+                        </td>
+                        <!-- 2. MEMBERSHIP PASS STATUS (Active Pass vs Expired/No Pass vs Suspended) -->
+                        <td class="p-3.5 font-sans">
+                            @if($m->membership_status === 'active' && $m->latestSubscription && \Carbon\Carbon::parse($m->latestSubscription->end_time)->isFuture())
+                                <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/30">ACTIVE PASS</span>
+                            @elseif($m->membership_status === 'suspended')
+                                <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-rose-950 text-rose-300 border border-rose-800/40">SUSPENDED</span>
+                            @else
+                                <span class="px-2 py-0.5 text-[10px] rounded font-bold bg-slate-800 text-slate-400 border border-slate-700">NO ACTIVE PASS</span>
                             @endif
                         </td>
                         <td class="p-3.5 text-emerald-400 font-bold">{{ $m->reward_points ?? 0 }} PTS</td>
-                        <td class="p-3.5">{{ $m->latestSubscription ? $m->latestSubscription->end_time->format('Y-m-d') : 'N/A' }}</td>
+                        <td class="p-3.5">
+                            @if($m->latestSubscription && \Carbon\Carbon::parse($m->latestSubscription->end_time)->isFuture())
+                                {{ $m->latestSubscription->end_time->format('Y-m-d') }}
+                            @else
+                                <span class="text-slate-500 font-sans italic text-[11px]">No active subscription</span>
+                            @endif
+                        </td>
                         <td class="p-3.5">{{ $m->customer ? $m->customer->contact_number : '—' }}</td>
                         <td class="p-3.5 text-right font-sans space-x-2">
-                            @if($m->membership_status === 'pending')
+                            @if(($m->verification_status ?? 'pending') === 'pending')
                                 <form action="{{ route('owner.members.approve', $m->id) }}" method="POST" class="inline">
                                     @csrf
-                                    <button type="submit" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs px-2.5 py-1 rounded">
+                                    <button type="submit" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs px-2.5 py-1 rounded-lg">
                                         Approve
                                     </button>
                                 </form>
@@ -84,7 +103,7 @@
     </div>
 </div>
 
-<!-- Modal: Add Approved Member (Directly Active) -->
+<!-- Modal: Add Approved Member (With Default Password & Calendar On Click) -->
 <dialog id="addMemberModal" class="bg-slate-900 border border-slate-800 text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-4">
         <div>
@@ -109,20 +128,29 @@
             <label class="block text-slate-400 mb-1">Email Address *</label>
             <input type="email" name="email" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white">
         </div>
+        <div>
+            <label class="block text-slate-400 mb-1">Account Default Password *</label>
+            <input type="text" name="password" value="pass123" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-mono">
+            <p class="text-[10px] text-slate-500 mt-0.5">The member will use this password to sign in.</p>
+        </div>
         <div class="grid grid-cols-2 gap-3">
             <div>
                 <label class="block text-slate-400 mb-1">Contact Phone *</label>
                 <input type="text" name="contact_number" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-mono">
             </div>
             <div>
-                <label class="block text-slate-400 mb-1">Initial Plan (Optional)</label>
-                <select name="package_id" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white">
-                    <option value="">No Initial Pass</option>
-                    @foreach($packages as $pkg)
-                        <option value="{{ $pkg->id }}">{{ $pkg->name }} (₱{{ number_format($pkg->price) }})</option>
-                    @endforeach
-                </select>
+                <label class="block text-slate-400 mb-1">Birthdate</label>
+                <input type="date" name="date_of_birth" onclick="this.showPicker()" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white font-mono cursor-pointer">
             </div>
+        </div>
+        <div>
+            <label class="block text-slate-400 mb-1">Initial Plan (Optional)</label>
+            <select name="package_id" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white">
+                <option value="">No Initial Pass</option>
+                @foreach($packages as $pkg)
+                    <option value="{{ $pkg->id }}">{{ $pkg->name }} (₱{{ number_format($pkg->price) }})</option>
+                @endforeach
+            </select>
         </div>
         <div>
             <label class="block text-slate-400 mb-1">Home Address</label>
@@ -130,16 +158,16 @@
         </div>
         <div class="bg-emerald-950/40 border border-emerald-500/20 p-2.5 rounded-lg text-[11px] text-emerald-300 flex items-center space-x-2">
             <span>✓</span>
-            <span>This member will be registered with <strong>Active / Approved</strong> status immediately.</span>
+            <span>This member will be registered with <strong>VERIFIED</strong> account status immediately.</span>
         </div>
         <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
             <button type="button" onclick="document.getElementById('addMemberModal').close()" class="px-3 py-1.5 border border-slate-800 text-slate-300 rounded-lg">Cancel</button>
-            <button type="submit" class="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold rounded-lg uppercase font-heading">Enroll & Approve</button>
+            <button type="submit" class="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold rounded-lg uppercase font-heading">Enroll & Verify</button>
         </div>
     </form>
 </dialog>
 
-<!-- Modal: Edit Member -->
+<!-- Modal: Edit Member (With Suspension Reason & Clickable Calendar) -->
 <dialog id="editMemberModal" class="bg-slate-900 border border-slate-800 text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-4">
         <div>
@@ -166,22 +194,28 @@
         </div>
         <div class="grid grid-cols-2 gap-3">
             <div>
-                <label class="block text-slate-400 mb-1">Membership Status</label>
-                <select name="membership_status" id="edit_status" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-semibold">
-                    <option value="active">Active</option>
-                    <option value="pending">Pending</option>
-                    <option value="expired">Expired</option>
+                <label class="block text-slate-400 mb-1">Pass Access Status</label>
+                <select name="membership_status" id="edit_status" onchange="toggleSuspensionField(this.value)" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-semibold">
+                    <option value="active">Active Pass</option>
+                    <option value="expired">Expired / No Pass</option>
                     <option value="suspended">Suspended</option>
                 </select>
             </div>
             <div>
                 <label class="block text-slate-400 mb-1">Plan Expiry Date</label>
-                <input type="date" name="end_date" id="edit_end_date" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono">
+                <input type="date" name="end_date" id="edit_end_date" onclick="this.showPicker()" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono cursor-pointer">
             </div>
         </div>
+
+        <!-- Conditional Suspension Reason Field -->
+        <div id="suspension_reason_box" class="hidden">
+            <label class="block text-rose-400 mb-1 font-semibold">Suspension Reason / Comments *</label>
+            <textarea name="suspension_reason" id="edit_suspension_reason" rows="2" placeholder="e.g. Broken gym rules, damage to equipment, payment disputes..." class="w-full bg-slate-950 border border-rose-900/60 rounded p-2 text-white"></textarea>
+        </div>
+
         <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
             <button type="button" onclick="document.getElementById('editMemberModal').close()" class="px-3 py-1.5 border border-slate-800 text-slate-300 rounded">Cancel</button>
-            <button type="submit" class="px-4 py-1.5 bg-emerald-500 text-slate-950 font-extrabold rounded uppercase font-heading">Update</button>
+            <button type="submit" class="px-4 py-1.5 bg-emerald-500 text-slate-950 font-extrabold rounded uppercase font-heading">Update Member</button>
         </div>
     </form>
 </dialog>
@@ -195,6 +229,15 @@ function filterMemberTable() {
     });
 }
 
+function toggleSuspensionField(val) {
+    const box = document.getElementById('suspension_reason_box');
+    if (val === 'suspended') {
+        box.classList.remove('hidden');
+    } else {
+        box.classList.add('hidden');
+    }
+}
+
 function openEditMemberModal(member, customer, endDate) {
     document.getElementById('edit_member_title').innerText = `${customer ? customer.first_name + ' ' + customer.last_name : 'Member'} (${member.member_code})`;
     document.getElementById('edit_first_name').value = customer ? customer.first_name : '';
@@ -202,6 +245,10 @@ function openEditMemberModal(member, customer, endDate) {
     document.getElementById('edit_contact').value = customer ? customer.contact_number : '';
     document.getElementById('edit_status').value = member.membership_status || 'active';
     document.getElementById('edit_end_date').value = endDate || '';
+    document.getElementById('edit_suspension_reason').value = member.suspension_reason || '';
+    
+    toggleSuspensionField(member.membership_status);
+
     document.getElementById('editMemberForm').action = `/owner/members/${member.id}/update`;
     document.getElementById('editMemberModal').showModal();
 }

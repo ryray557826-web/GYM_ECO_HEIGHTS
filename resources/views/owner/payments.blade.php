@@ -16,6 +16,7 @@
             </button>
         </div>
 
+        <!-- Pending Approvals Cards -->
         <div class="space-y-3">
             @forelse($pendingPayments as $pay)
             <div class="bg-[#0f172a] border border-[#1e293b] p-4 rounded-xl flex justify-between items-center shadow">
@@ -26,7 +27,7 @@
                         <span class="bg-yellow-950 text-yellow-400 text-[10px] font-bold px-1.5 py-0.5 rounded">PENDING</span>
                     </div>
                     <p class="text-xs text-gray-400">
-                        {{ $pay->payment_type === 'monthly_subscription' ? 'Monthly' : 'Daily' }} — 
+                        {{ $pay->payment_type === 'monthly_subscription' ? 'Subscription' : 'Daily Pass' }} — 
                         <span class="text-[#76c800] font-bold">₱{{ number_format($pay->amount, 2) }}</span> · 
                         {{ $pay->method ? $pay->method->name : 'Manual' }}
                         @if($pay->reference_number)
@@ -51,6 +52,7 @@
             @endforelse
         </div>
 
+        <!-- Ledger Table -->
         <div class="space-y-3 pt-3">
             <h3 class="text-xs font-heading font-extrabold uppercase tracking-wider text-white">ALL REQUESTS / REVENUE LEDGER</h3>
             <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl overflow-x-auto shadow">
@@ -72,7 +74,7 @@
                         <tr>
                             <td class="p-3 text-gray-400">{{ $p->payment_code }}</td>
                             <td class="p-3 font-sans font-bold text-white">{{ $p->customer ? $p->customer->full_name : 'Customer' }}</td>
-                            <td class="p-3 font-sans">{{ $p->payment_type === 'monthly_subscription' ? 'Monthly' : 'Daily' }}</td>
+                            <td class="p-3 font-sans">{{ $p->payment_type === 'monthly_subscription' ? 'Subscription' : 'Daily' }}</td>
                             <td class="p-3 text-[#76c800] font-bold">₱{{ number_format($p->amount, 2) }}</td>
                             <td class="p-3 font-sans">{{ $p->method ? $p->method->name : 'Manual' }}</td>
                             <td class="p-3">{{ $p->reference_number ?? '—' }}</td>
@@ -95,11 +97,14 @@
                     </tbody>
                 </table>
             </div>
+            <div>
+                {{ $payments->links() }}
+            </div>
         </div>
     </div>
 </div>
 
-<!-- Modal: Record Manual Payment -->
+<!-- Modal: Record Manual Payment (With Fixed Amount & All Dynamic Packages) -->
 <dialog id="manualPaymentModal" class="bg-[#0f172a] border border-[#1e293b] text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-[#1e293b] mb-4">
         <h3 class="text-sm font-heading font-extrabold uppercase tracking-wider text-white">Record Member Payment</h3>
@@ -111,22 +116,24 @@
             <label class="block text-gray-400 mb-1">Select Member *</label>
             <select name="member_id" required class="w-full bg-[#080d1a] border border-[#1e293b] rounded p-2 text-white">
                 @foreach($members as $m)
-                    <option value="{{ $m->id }}">{{ $m->member_code }} — {{ $m->customer->full_name }}</option>
+                    <option value="{{ $m->id }}">{{ $m->member_code }} — {{ $m->customer ? $m->customer->full_name : 'No Name' }}</option>
                 @endforeach
             </select>
         </div>
         <div class="grid grid-cols-2 gap-3">
             <div>
-                <label class="block text-gray-400 mb-1">Payment Plan</label>
-                <select name="plan_type" onchange="document.getElementById('manual_amount').value = (this.value === 'monthly' ? '750.00' : '50.00')" class="w-full bg-[#080d1a] border border-[#1e293b] rounded p-2 text-white">
-                    <option value="monthly">Monthly Pass (₱750)</option>
-                    <option value="per_session">Per-Session (₱50)</option>
+                <label class="block text-gray-400 mb-1">Select Plan *</label>
+                <select name="package_id" id="manual_package_select" onchange="syncFixedRate(this)" required class="w-full bg-[#080d1a] border border-[#1e293b] rounded p-2 text-white">
+                    @foreach($packages as $pkg)
+                        <option value="{{ $pkg->id }}" data-price="{{ $pkg->price }}">{{ $pkg->name }}</option>
+                    @endforeach
                 </select>
             </div>
             <div>
-                <label class="block text-gray-400 mb-1">Amount (₱)</label>
-                <input type="number" step="0.01" name="amount" id="manual_amount" value="750.00" required 
-                    class="w-full bg-[#080d1a] border border-[#1e293b] rounded p-2 text-white font-mono">
+                <label class="block text-gray-400 mb-1">Fixed Rate (₱)</label>
+                <input type="text" id="manual_fixed_amount" readonly 
+                    value="{{ $packages->first() ? number_format($packages->first()->price, 2) : '0.00' }}" 
+                    class="w-full bg-[#080d1a] border border-gray-800 rounded p-2 text-emerald-400 font-mono font-bold cursor-not-allowed">
             </div>
         </div>
         <div>
@@ -148,4 +155,14 @@
         </div>
     </form>
 </dialog>
+
+@push('scripts')
+<script>
+function syncFixedRate(select) {
+    const selected = select.options[select.selectedIndex];
+    const price = selected.getAttribute('data-price') || '0.00';
+    document.getElementById('manual_fixed_amount').value = parseFloat(price).toFixed(2);
+}
+</script>
+@endpush
 @endsection

@@ -5,6 +5,14 @@
     @include('owner._top_stats')
     @include('owner._navigation')
 
+    <!-- Flash Notifications -->
+    @if(session('success'))
+        <div class="bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between">
+            <span>✓ {{ session('success') }}</span>
+            <button onclick="this.parentElement.remove()" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+    @endif
+
     <div class="space-y-6">
         <!-- Financial Metrics -->
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -24,7 +32,7 @@
             </div>
         </div>
 
-        <!-- 6-Month Chart -->
+        <!-- 6-Month Chart (Completely Flat / 0 if no transactions exist) -->
         <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl p-6 shadow">
             <h3 class="text-xs font-heading font-extrabold uppercase tracking-wider text-white mb-4">
                 6-MONTH REVENUE VS EXPENSES
@@ -66,17 +74,20 @@
                         </tr>
                         @empty
                         <tr>
-                            <td colspan="5" class="p-4 text-center text-gray-500 font-sans">No expenses logged yet.</td>
+                            <td colspan="5" class="p-4 text-center text-gray-500 font-sans italic">No expenses logged yet.</td>
                         </tr>
                         @endforelse
                     </tbody>
                 </table>
             </div>
+            <div>
+                {{ $expenses->links() }}
+            </div>
         </div>
     </div>
 </div>
 
-<!-- Modal: Add Expense -->
+<!-- Modal: Add Expense (With clickable calendar) -->
 <dialog id="addExpenseModal" class="bg-[#0f172a] border border-[#1e293b] text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-[#1e293b] mb-4">
         <h3 class="text-sm font-heading font-extrabold uppercase tracking-wider text-white">+ Record Gym Expense</h3>
@@ -107,8 +118,8 @@
             </div>
             <div>
                 <label class="block text-gray-400 mb-1">Date</label>
-                <input type="date" name="expense_date" value="{{ date('Y-m-d') }}" required 
-                    class="w-full bg-[#080d1a] border border-[#1e293b] rounded p-2 text-white font-mono">
+                <input type="date" name="expense_date" value="{{ date('Y-m-d') }}" onclick="this.showPicker()" required 
+                    class="w-full bg-[#080d1a] border border-[#1e293b] rounded p-2 text-white font-mono cursor-pointer">
             </div>
         </div>
         <div class="flex justify-end gap-2 pt-3 border-t border-[#1e293b]">
@@ -126,10 +137,10 @@ document.addEventListener("DOMContentLoaded", () => {
         new Chart(el.getContext('2d'), {
             type: 'bar',
             data: {
-                labels: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'],
+                labels: {!! json_encode($chartLabels ?? ['May','Jun','Jul','Aug','Sep','Oct']) !!},
                 datasets: [
-                    { label: 'Revenue', data: [8000, 10000, 11500, 10500, 14000, {{ $totalRevenue }}], backgroundColor: '#76c800', borderRadius: 4 },
-                    { label: 'Expenses', data: [1200, 1500, 800, 3500, 5000, {{ $totalExpenses }}], backgroundColor: '#dc2626', borderRadius: 4 }
+                    { label: 'Revenue', data: {!! json_encode($chartRevenue ?? [0,0,0,0,0,0]) !!}, backgroundColor: '#76c800', borderRadius: 4 },
+                    { label: 'Expenses', data: {!! json_encode($chartExpenses ?? [0,0,0,0,0,0]) !!}, backgroundColor: '#dc2626', borderRadius: 4 }
                 ]
             },
             options: {
