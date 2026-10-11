@@ -30,7 +30,6 @@ class ImportLogbookMembers extends Command
      */
     protected function generateGymTimes(): array
     {
-        // Realistic distribution: 35% Morning (6-9 AM), 20% Afternoon (1-4 PM), 35% Evening Rush (5-8 PM), 10% Night (9-10 PM)
         $weight = rand(1, 100);
 
         if ($weight <= 35) {
@@ -46,11 +45,9 @@ class ImportLogbookMembers extends Command
         $minute = rand(0, 59);
         $checkIn = sprintf('%02d:%02d:00', $hour, $minute);
 
-        // Workout session duration: 45 to 90 minutes
         $workoutMins = rand(45, 90);
         $checkOutTime = Carbon::createFromTime($hour, $minute, 0)->addMinutes($workoutMins);
 
-        // Cap checkout before 11:00 PM closing
         if ($checkOutTime->hour >= 23) {
             $checkOutTime = Carbon::createFromTime(22, 50, 0);
         }
@@ -202,8 +199,11 @@ class ImportLogbookMembers extends Command
                         'status'     => 'active'
                     ]);
 
+                    // ✅ COLLISION-PROOF UNIQUE PAYMENT CODE: Uses sequential count + random hex
+                    $uniqueCode = 'PAY-LOG-' . str_pad($importedMembers + 1, 4, '0', STR_PAD_LEFT) . '-' . bin2hex(random_bytes(3));
+
                     $pay = Payment::create([
-                        'payment_code'           => 'PAY-' . Carbon::now()->format('YmdHis') . rand(10, 99),
+                        'payment_code'           => $uniqueCode,
                         'customer_id'            => $customer->id,
                         'member_id'              => $member->id,
                         'member_subscription_id' => $sub->id,
@@ -216,7 +216,7 @@ class ImportLogbookMembers extends Command
                     ]);
 
                     Revenue::create([
-                        'revenue_code' => 'REV-' . $pay->id,
+                        'revenue_code' => 'REV-' . $pay->id . '-' . bin2hex(random_bytes(2)),
                         'payment_id'   => $pay->id,
                         'budget_id'    => $budOps->id,
                         'amount'       => $pkg->price,
@@ -237,11 +237,11 @@ class ImportLogbookMembers extends Command
                                 'expires_at'     => $endTime->format('Y-m-d H:i'),
                             ]);
                         } catch (\Exception $e) {
-                            // Proceed without halting transaction
+                            // Continue gracefully
                         }
                     }
 
-                    // 8. Log Varied Attendance Entries & Sync each to Firebase
+                    // 8. Log Varied Attendance Entries & Sync to Firebase
                     foreach ($entry['dates'] as $attDate) {
                         [$timeIn, $timeOut] = $this->generateGymTimes();
 
