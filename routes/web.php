@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\Owner\DashboardController as OwnerDashboard;
 use App\Http\Controllers\Owner\QuickCheckInController;
 use App\Http\Controllers\Owner\MemberManagementController;
@@ -14,11 +15,13 @@ use App\Http\Controllers\Member\MemberPaymentController;
 use App\Http\Controllers\Member\GymNoteController;
 
 Route::get('/', fn() => redirect()->route('login'));
+
 // Profile Routes (Accessible to both Owner and Members)
 Route::middleware(['auth'])->group(function () {
-    Route::get('/profile', [App\Http\Controllers\ProfileController::class, 'show'])->name('profile.show');
-    Route::post('/profile', [App\Http\Controllers\ProfileController::class, 'update'])->name('profile.update');
+    Route::get('/profile', [ProfileController::class, 'show'])->name('profile.show');
+    Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
 });
+
 // Authentication
 Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
 Route::post('/login', [AuthController::class, 'login']);
@@ -39,7 +42,7 @@ Route::middleware(['auth'])->prefix('owner')->name('owner.')->group(function () 
     // Attendance Log Sheets
     Route::get('/attendance', [OwnerDashboard::class, 'attendanceLogs'])->name('attendance.index');
 
-    // Member Management (Direct Enrollments & 1-Click Approvals)
+    // Member Management
     Route::get('/members', [MemberManagementController::class, 'index'])->name('members.index');
     Route::post('/members', [MemberManagementController::class, 'store'])->name('members.store');
     Route::post('/members/{member}/update', [MemberManagementController::class, 'update'])->name('members.update');
@@ -63,10 +66,12 @@ Route::middleware(['auth'])->prefix('owner')->name('owner.')->group(function () 
     Route::get('/finance', [FinancialController::class, 'index'])->name('finance.index');
     Route::post('/expenses', [FinancialController::class, 'storeExpense'])->name('expenses.store');
 
-    // Equipment
+    // Equipment & Units Inventory (Fixed routes)
     Route::get('/equipment', [EquipmentController::class, 'index'])->name('equipment.index');
     Route::post('/equipment', [EquipmentController::class, 'store'])->name('equipment.store');
+    Route::post('/equipment/{equipment}/add-units', [EquipmentController::class, 'addUnits'])->name('equipment.addUnits');
     Route::post('/equipment/{equipment}/maintenance', [EquipmentController::class, 'storeMaintenance'])->name('equipment.maintenance');
+    Route::delete('/equipment/{equipment}', [EquipmentController::class, 'destroy'])->name('equipment.destroy');
 
     // Announcements
     Route::post('/announcements', [OwnerDashboard::class, 'storeAnnouncement'])->name('announcements.store');
