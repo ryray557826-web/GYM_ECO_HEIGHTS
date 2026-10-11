@@ -22,8 +22,16 @@
         </div>
     @endif
 
-    <!-- PENDING ACCOUNT BANNER -->
-    @if($member->membership_status === 'pending' || auth()->user()->account_status === 'pending')
+    @php
+        $isVerified = ($member->verification_status ?? 'pending') === 'verified';
+        $sub = $member->latestSubscription;
+        $pkg = $sub ? $sub->package : null;
+        $isSubActive = $sub && $sub->status === 'active' && \Carbon\Carbon::parse($sub->end_time)->isFuture();
+        $isDaily = $isSubActive && $pkg && ($pkg->plan_type === 'daily' || $pkg->duration_in_days <= 1);
+    @endphp
+
+    <!-- PENDING ACCOUNT BANNER (Shown ONLY if verification_status is actually pending) -->
+    @if(!$isVerified)
     <div class="bg-amber-950/60 border border-amber-500/40 p-4 rounded-2xl flex items-center justify-between shadow-lg">
         <div class="flex items-center space-x-3">
             <span class="text-amber-400 text-2xl">⏳</span>
@@ -50,23 +58,38 @@
         </nav>
     </div>
 
-    <!-- 1. TOP HERO STATUS & REWARD POINTS GRID (3 Expansive Cards) -->
+    <!-- 1. TOP HERO STATUS & REWARD POINTS GRID -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
         
-        <!-- Card 1: Membership Status -->
+        <!-- Card 1: Membership Status & Account Verification -->
         <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-md flex flex-col justify-between">
             <div>
                 <div class="flex justify-between items-center">
-                    <span class="text-xs uppercase font-heading font-semibold text-slate-400 tracking-wider">MEMBERSHIP STATUS</span>
+                    <span class="text-xs uppercase font-heading font-semibold text-slate-400 tracking-wider">ACCOUNT VERIFICATION</span>
                     <span class="px-2.5 py-0.5 text-xs font-bold rounded 
-                        @if($member->membership_status === 'active') bg-emerald-950 text-emerald-400 border border-emerald-500/30
-                        @elseif($member->membership_status === 'expired') bg-rose-950 text-rose-400 border border-rose-800/30
+                        @if($isVerified) bg-sky-950 text-sky-400 border border-sky-500/30
                         @else bg-amber-950 text-amber-400 border border-amber-800/30 @endif">
-                        {{ strtoupper($member->membership_status ?? 'PENDING') }}
+                        {{ $isVerified ? 'VERIFIED' : 'PENDING' }}
                     </span>
                 </div>
-                <div class="mt-3 text-lg sm:text-xl font-heading font-extrabold text-white">
-                    {{ $member->latestSubscription && $member->latestSubscription->package ? $member->latestSubscription->package->name : 'No Active Pass' }}
+                
+                <div class="mt-3 flex items-center justify-between">
+                    <div>
+                        <span class="text-xs uppercase text-slate-400 block font-heading">PASS ACCESS</span>
+                        <div class="text-lg sm:text-xl font-heading font-extrabold text-white">
+                            {{ $isSubActive && $pkg ? $pkg->name : 'No Active Pass' }}
+                        </div>
+                    </div>
+
+                    @if($member->membership_status === 'suspended')
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-800/40">SUSPENDED</span>
+                    @elseif($isDaily)
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/30">ACTIVE (DAILY)</span>
+                    @elseif($isSubActive && $pkg)
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/30">ACTIVE ({{ strtoupper($pkg->plan_type) }})</span>
+                    @else
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">NO PASS</span>
+                    @endif
                 </div>
             </div>
             <div class="pt-4 border-t border-slate-800 flex justify-between text-xs text-slate-400 font-mono">
@@ -75,7 +98,7 @@
             </div>
         </div>
 
-        <!-- Card 2: Attendance & Payment Reward Points (Goal: 500 PTS) -->
+        <!-- Card 2: Attendance & Payment Reward Points -->
         <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-md flex flex-col justify-between space-y-4">
             <div>
                 <div class="flex justify-between items-center">
@@ -115,7 +138,13 @@
             <div>
                 <span class="text-xs uppercase font-heading font-semibold text-slate-400 tracking-wider">PASS EXPIRATION</span>
                 <div class="text-lg sm:text-xl font-heading font-extrabold text-emerald-400 mt-2 font-mono">
-                    {{ $member->latestSubscription ? $member->latestSubscription->end_time->format('Y-m-d H:i') : 'No Active Pass' }}
+                    @if($isDaily && $sub)
+                        {{ $sub->end_time->format('Y-m-d') }} <span class="text-xs text-slate-400 font-sans block">(End of Day)</span>
+                    @elseif($isSubActive && $sub)
+                        {{ $sub->end_time->format('Y-m-d H:i') }}
+                    @else
+                        <span class="text-slate-500 font-sans text-base italic">No Active Pass</span>
+                    @endif
                 </div>
             </div>
             <div class="pt-4 border-t border-slate-800 flex justify-between items-center">
@@ -242,7 +271,7 @@
                 <div>
                     <h4 class="text-sm font-heading font-extrabold text-white uppercase tracking-wider">Membership Plan</h4>
                     <p class="text-xs text-slate-400 mt-0.5">
-                        @if($member->membership_status === 'pending')
+                        @if(!$isVerified)
                             Apply for a Daily Pass today.
                         @else
                             Renew monthly, quarterly, or yearly online.
@@ -331,11 +360,11 @@
 
 </div>
 
-<!-- Modal: Membership Payment (Restricted to 1-Day Pass if Pending) -->
+<!-- Modal: Membership Payment (Unlocked for Verified Members) -->
 <dialog id="paymentModal" class="bg-slate-900 border border-slate-800 text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-4">
         <h3 class="text-sm font-heading font-extrabold uppercase tracking-wider text-white">
-            {{ ($member->membership_status === 'pending' || auth()->user()->account_status === 'pending') ? 'Apply for Daily Pass (1 Day)' : 'Renew Membership Subscription' }}
+            {{ !$isVerified ? 'Apply for Daily Pass (1 Day)' : 'Renew Membership Subscription' }}
         </h3>
         <button onclick="document.getElementById('paymentModal').close()" class="text-slate-400 hover:text-white">✕</button>
     </div>
@@ -346,7 +375,7 @@
         <div>
             <label class="block text-slate-400 mb-1 font-semibold">Select Membership Plan *</label>
             <select name="package_id" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white font-medium focus:border-emerald-500 outline-none">
-                @if($member->membership_status === 'pending' || auth()->user()->account_status === 'pending')
+                @if(!$isVerified)
                     <!-- PENDING ACCOUNTS: RESTRICTED TO DAILY SUBSCRIPTION ONLY -->
                     @foreach($packages->where('plan_type', 'daily') as $pkg)
                         <option value="{{ $pkg->id }}">
@@ -354,8 +383,8 @@
                         </option>
                     @endforeach
                 @else
-                    <!-- VERIFIED ACCOUNTS: ALL PLANS ACCESSIBLE -->
-                    @foreach($packages->where('plan_type', '!=', 'daily') as $pkg)
+                    <!-- VERIFIED ACCOUNTS: ALL PLANS UNLOCKED (Monthly, Quarterly, Yearly, Promos) -->
+                    @foreach($packages as $pkg)
                         <option value="{{ $pkg->id }}">
                             {{ $pkg->name }} — ₱{{ number_format($pkg->price) }}
                             @if($pkg->promo_badge) ({{ $pkg->promo_badge }}) @endif
@@ -363,7 +392,7 @@
                     @endforeach
                 @endif
             </select>
-            @if($member->membership_status === 'pending')
+            @if(!$isVerified)
                 <p class="text-[10px] text-amber-400 mt-1">
                     * Pending accounts can only purchase 1-day daily access until verified by the owner.
                 </p>

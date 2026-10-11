@@ -13,6 +13,7 @@ use App\Models\Revenue;
 use App\Models\PaymentMethod;
 use App\Models\Budget;
 use App\Models\AuditLog;
+use App\Services\FirebaseService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,9 +22,12 @@ use Illuminate\Support\Facades\Schema;
 
 class MemberManagementController extends Controller
 {
+    /**
+     * Display the Members table and handle automatic subscription expirations
+     */
     public function index()
     {
-        // 1. Automatically expire any subscriptions past their end time (end-of-day for daily, 30+ days for monthly)
+        // 1. Automatically expire any subscriptions past their end time (midnight for daily, 30+ days for monthly)
         $overdueSubs = MemberSubscription::where('status', 'active')
             ->where('end_time', '<', Carbon::now())
             ->get();
@@ -35,13 +39,20 @@ class MemberManagementController extends Controller
             }
         }
 
+        // 2. Clean-up: If a member is VERIFIED, ensure their pass status is NOT stuck on 'pending'
+        Member::where('verification_status', 'verified')
+            ->where('membership_status', 'pending')
+            ->update(['membership_status' => 'expired']);
+
         $members = Member::with(['customer', 'latestSubscription.package'])->get();
         $packages = Package::where('is_active', true)->get();
 
         return view('owner.members', compact('members', 'packages'));
     }
 
-    // Owner registers member: Enrolls member, attaches pass, logs payment & revenue, awards points
+    /**
+     * Owner registers an APPROVED member with instant pass activation, revenue, and points
+     */
     public function store(Request $request)
     {
         $request->validate([
@@ -63,7 +74,7 @@ class MemberManagementController extends Controller
                 'email'             => strtolower($request->email),
                 'password'          => Hash::make($rawPassword),
                 'role'              => 'member',
-                'account_status'    => 'active',
+                'account_status'    => 'active', // Direct addition is active
                 'email_verified_at' => Carbon::now(),
             ]);
 
@@ -86,7 +97,7 @@ class MemberManagementController extends Controller
             $hasActivePackage = $request->filled('package_id');
             $package = $hasActivePackage ? Package::find($request->package_id) : null;
 
-            // 3. Determine initial reward points
+            // 3. Calculate Reward Points Based on Schedule
             $initialPoints = 0;
             if ($package) {
                 if ($package->plan_type === 'daily' || $package->duration_in_days <= 1) {
@@ -105,7 +116,7 @@ class MemberManagementController extends Controller
                 'customer_id'         => $customer->id,
                 'member_code'         => $memberCode,
                 'joined_date'         => Carbon::today(),
-                'verification_status' => 'verified',
+                'verification_status' => 'verified', // Pre-approved by Owner
                 'membership_status'   => $hasActivePackage ? 'active' : 'expired',
                 'reward_points'       => $initialPoints,
             ]);
@@ -115,11 +126,11 @@ class MemberManagementController extends Controller
                 $user->save();
             }
 
-            // 5. If a pass was chosen, create subscription, record verified payment & recognized revenue
+            // 5. If a pass was chosen, activate subscription and record revenue
             if ($hasActivePackage && $package) {
                 $isDaily = ($package->plan_type === 'daily' || $package->duration_in_days <= 1);
                 
-                // Daily passes expire strictly at the end of the day (23:59:59)
+                // Daily passes expire at the end of the day (23:59:59)
                 $startTime = Carbon::now();
                 $endTime = $isDaily ? Carbon::today()->endOfDay() : Carbon::now()->addDays($package->duration_in_days);
 
@@ -148,7 +159,7 @@ class MemberManagementController extends Controller
                     'verified_by'            => auth()->id()
                 ]);
 
-                // Record Revenue to update Total Revenue counter
+                // Record in Revenue Ledger
                 $budOps = Budget::firstOrCreate(
                     ['budget_code' => 'BUD-2026-OPS'],
                     ['category_name' => 'Facility Operations', 'allocated_amount' => 35000.00, 'spent_amount' => 0.00]
@@ -163,45 +174,90 @@ class MemberManagementController extends Controller
                 ]);
             }
 
-            AuditLog::create([
-                'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
-                'user_id'         => auth()->id(),
-                'action'          => "New Member Enrolled ({$memberCode})" . ($package ? " with {$package->name} (₱{$package->price} Revenue Recorded)" : ""),
-                'entity_type'     => Member::class,
-                'entity_id'       => $member->id,
-                'validity_period' => $package ? ($package->plan_type === 'daily' ? 'End of Day' : "{$package->duration_in_days} Days") : 'No Pass',
-                'performed_by'    => 'Owner'
-            ]);
+            // Optional Cloud Sync to Firebase Firestore
+            try {
+                $firebase = new FirebaseService();
+                $firebase->syncMember([
+                    'member_code'    => $memberCode,
+                    'name'           => "{$request->first_name} {$request->last_name}",
+                    'email'          => $request->email,
+                    'contact_number' => $request->contact_number,
+                    'status'         => 'active',
+                    'reward_points'  => $initialPoints,
+                ]);
+            } catch (\Exception $e) {
+                // Fail gracefully if offline
+            }
+
+            if (class_exists(AuditLog::class)) {
+                AuditLog::create([
+                    'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                    'user_id'         => auth()->id(),
+                    'action'          => "New Member Enrolled and Verified ({$memberCode})" . ($package ? " with {$package->name} (₱{$package->price} Revenue Recorded)" : ""),
+                    'entity_type'     => Member::class,
+                    'entity_id'       => $member->id,
+                    'validity_period' => $package ? ($package->plan_type === 'daily' ? 'End of Day' : "{$package->duration_in_days} Days") : 'No Pass',
+                    'performed_by'    => 'Owner'
+                ]);
+            }
         });
 
         return back()->with('success', 'Member registered, subscription activated, and revenue recorded successfully.');
     }
 
+    /**
+     * 1-Click Approve a pending member to VERIFIED
+     */
     public function approve(Member $member)
     {
         DB::transaction(function () use ($member) {
+            $hasActiveSub = $member->latestSubscription && 
+                            $member->latestSubscription->status === 'active' && 
+                            Carbon::parse($member->latestSubscription->end_time)->isFuture();
+
             $member->update([
-                'verification_status' => 'verified'
+                'verification_status' => 'verified',
+                'membership_status'   => $hasActiveSub ? 'active' : 'expired',
             ]);
 
             if ($member->customer && $member->customer->user) {
                 $member->customer->user->update(['account_status' => 'active']);
             }
 
-            AuditLog::create([
-                'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
-                'user_id'         => auth()->id(),
-                'action'          => "Member Account Verified & Approved ({$member->member_code})",
-                'entity_type'     => Member::class,
-                'entity_id'       => $member->id,
-                'validity_period' => 'Verified Account',
-                'performed_by'    => 'Owner'
-            ]);
+            // Sync verified status to Firebase
+            try {
+                $firebase = new FirebaseService();
+                $firebase->syncMember([
+                    'member_code'    => $member->member_code,
+                    'name'           => $member->customer ? $member->customer->full_name : 'Member',
+                    'email'          => $member->customer ? $member->customer->email : '',
+                    'contact_number' => $member->customer ? $member->customer->contact_number : '',
+                    'status'         => 'active',
+                    'reward_points'  => $member->reward_points ?? 0,
+                ]);
+            } catch (\Exception $e) {
+                // Graceful fallback
+            }
+
+            if (class_exists(AuditLog::class)) {
+                AuditLog::create([
+                    'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                    'user_id'         => auth()->id(),
+                    'action'          => "Member Account Verified & Approved ({$member->member_code})",
+                    'entity_type'     => Member::class,
+                    'entity_id'       => $member->id,
+                    'validity_period' => 'Verified Account',
+                    'performed_by'    => 'Owner'
+                ]);
+            }
         });
 
         return back()->with('success', "Member {$member->member_code} is now VERIFIED.");
     }
 
+    /**
+     * Update member personal information, verification, and pass status
+     */
     public function update(Request $request, Member $member)
     {
         $request->validate([
@@ -223,6 +279,7 @@ class MemberManagementController extends Controller
                 ]);
             }
 
+            // Check if member holds an active long-term pass (>= 28 days)
             $sub = $member->latestSubscription;
             $package = $sub ? $sub->package : null;
             $canModifyPass = $sub && 
@@ -234,6 +291,7 @@ class MemberManagementController extends Controller
                 'verification_status' => $request->verification_status,
             ];
 
+            // Only modify membership_status if allowed (monthly+ plan) OR if setting to suspended
             if ($request->filled('membership_status')) {
                 if ($request->membership_status === 'suspended' || $canModifyPass) {
                     $updateData['membership_status'] = $request->membership_status;
@@ -249,6 +307,7 @@ class MemberManagementController extends Controller
                 ]);
             }
 
+            // Only update end_date if member has an active monthly or longer subscription
             if ($canModifyPass && $request->filled('end_date') && $sub) {
                 $sub->update([
                     'end_time' => Carbon::parse($request->end_date)->endOfDay(),
@@ -256,14 +315,16 @@ class MemberManagementController extends Controller
                 ]);
             }
 
-            AuditLog::create([
-                'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
-                'user_id'         => auth()->id(),
-                'action'          => "Member Profile Updated ({$member->member_code}) - Verified: {$request->verification_status}",
-                'entity_type'     => Member::class,
-                'entity_id'       => $member->id,
-                'performed_by'    => 'Owner'
-            ]);
+            if (class_exists(AuditLog::class)) {
+                AuditLog::create([
+                    'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                    'user_id'         => auth()->id(),
+                    'action'          => "Member Profile Updated ({$member->member_code}) - Verified: {$request->verification_status}",
+                    'entity_type'     => Member::class,
+                    'entity_id'       => $member->id,
+                    'performed_by'    => 'Owner'
+                ]);
+            }
         });
 
         return back()->with('success', "Member {$member->member_code} details updated successfully.");
