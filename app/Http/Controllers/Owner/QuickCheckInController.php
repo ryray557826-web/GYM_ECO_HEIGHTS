@@ -4,21 +4,20 @@ namespace App\Http\Controllers\Owner;
 
 use App\Http\Controllers\Controller;
 use App\Models\Member;
+use App\Models\Package;
+use App\Models\MemberSubscription;
 use App\Models\Payment;
 use App\Models\Revenue;
 use App\Models\Attendance;
 use App\Models\AuditLog;
 use App\Models\PaymentMethod;
+use App\Models\Budget;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class QuickCheckInController extends Controller
 {
-    /**
-     * Search member by Member ID and strictly verify if they hold
-     * an active subscription that is MONTHLY OR LONGER (>= 28 days)
-     */
     public function search(Request $request)
     {
         $query = strtoupper(trim($request->member_id));
@@ -37,16 +36,38 @@ class QuickCheckInController extends Controller
         $subscription = $member->latestSubscription;
         $package = $subscription ? $subscription->package : null;
 
-        // Strict Check: Must be active, unexpired, AND duration must be MONTHLY OR LONGER (>= 28 days)
+        // Strict Check: Must hold active MONTHLY OR LONGER pass (>= 28 days) to get free check-in
         $isMonthlyOrMoreActive = $subscription && 
                                  $subscription->status === 'active' && 
                                  $package && 
                                  ($package->duration_in_days >= 28 || in_array($package->plan_type, ['monthly', 'quarterly', 'yearly', 'annual'])) &&
                                  Carbon::parse($subscription->end_time)->isFuture();
 
+        $isDailyActive = $subscription &&
+                         $subscription->status === 'active' &&
+                         $package &&
+                         ($package->plan_type === 'daily' || $package->duration_in_days <= 1) &&
+                         Carbon::parse($subscription->end_time)->isFuture();
+
         $planTypeName = 'Walk-In';
         if ($package) {
             $planTypeName = $package->name . ' (' . ucfirst($package->plan_type) . ')';
+        }
+
+        $expiryLabel = 'No active subscription';
+        if ($subscription && Carbon::parse($subscription->end_time)->isFuture()) {
+            $expiryLabel = $isDailyActive 
+                ? Carbon::parse($subscription->end_time)->format('Y-m-d') . ' (End of Day)'
+                : Carbon::parse($subscription->end_time)->format('Y-m-d H:i');
+        }
+
+        $statusBadge = 'NO ACTIVE PASS';
+        if ($isMonthlyOrMoreActive) {
+            $statusBadge = 'ACTIVE (' . strtoupper($package->plan_type) . ')';
+        } elseif ($isDailyActive) {
+            $statusBadge = 'ACTIVE (DAILY PASS)';
+        } elseif ($subscription && $subscription->status === 'expired') {
+            $statusBadge = 'EXPIRED';
         }
 
         return response()->json([
@@ -57,20 +78,16 @@ class QuickCheckInController extends Controller
                 'member_id'          => $member->member_code,
                 'name'               => $member->customer ? $member->customer->full_name : 'No Name',
                 'contact'            => $member->customer->contact_number ?? 'No contact provided',
-                'has_active_monthly' => $isMonthlyOrMoreActive, // Strictly true ONLY if monthly or longer
+                'has_active_monthly' => $isMonthlyOrMoreActive,
                 'reward_points'      => $member->reward_points ?? 0,
                 'plan_type'          => $planTypeName,
-                'expires_at'         => ($subscription && Carbon::parse($subscription->end_time)->isFuture()) 
-                                            ? Carbon::parse($subscription->end_time)->format('Y-m-d H:i') 
-                                            : 'No active subscription',
-                'status'             => $isMonthlyOrMoreActive ? 'ACTIVE PASS' : ($subscription && $subscription->status === 'expired' ? 'EXPIRED' : 'NO ACTIVE PASS')
+                'expires_at'         => $expiryLabel,
+                'status'             => $statusBadge
             ]
         ]);
     }
 
-    /**
-     * Confirm ₱50 Paid Entry (Cash or GCash with Reference Number) + Award 3 Points
-     */
+    // Confirm ₱50 Paid Entry + Create Daily Subscription (Expires End of Day) + Award 3 Points
     public function confirmPerSession(Request $request)
     {
         $request->validate([
@@ -98,26 +115,51 @@ class QuickCheckInController extends Controller
             $today = Carbon::today()->toDateString();
             $now = Carbon::now()->toTimeString();
 
-            $payment = Payment::create([
-                'payment_code'      => 'PAY-' . Carbon::now()->format('YmdHis'),
-                'customer_id'       => $member->customer_id,
-                'member_id'         => $member->id,
-                'payment_method_id' => $method->id,
-                'amount'            => 50.00,
-                'payment_type'      => 'per_session',
-                'reference_number'  => $request->reference_number,
-                'status'            => 'verified',
-                'verified_at'       => Carbon::now(),
-                'verified_by'       => auth()->id()
+            // 1. Find or create Daily Package
+            $dailyPackage = Package::firstOrCreate(
+                ['plan_type' => 'daily'],
+                ['package_code' => 'PKG-DAY-050', 'name' => 'Daily Walk-In Session', 'price' => 50.00, 'duration_in_days' => 1, 'is_active' => true]
+            );
+
+            // 2. Attach Daily Subscription that expires at the end of the day (23:59:59)
+            $sub = MemberSubscription::create([
+                'member_id'  => $member->id,
+                'package_id' => $dailyPackage->id,
+                'start_time' => Carbon::now(),
+                'end_time'   => Carbon::today()->endOfDay(),
+                'status'     => 'active'
             ]);
+
+            // 3. Record Verified Payment
+            $payment = Payment::create([
+                'payment_code'           => 'PAY-' . Carbon::now()->format('YmdHis'),
+                'customer_id'            => $member->customer_id,
+                'member_id'              => $member->id,
+                'member_subscription_id' => $sub->id,
+                'payment_method_id'      => $method->id,
+                'amount'                 => 50.00,
+                'payment_type'           => 'per_session',
+                'reference_number'       => $request->reference_number,
+                'status'                 => 'verified',
+                'verified_at'            => Carbon::now(),
+                'verified_by'            => auth()->id()
+            ]);
+
+            // 4. Record in Revenue Ledger
+            $budOps = Budget::firstOrCreate(
+                ['budget_code' => 'BUD-2026-OPS'],
+                ['category_name' => 'Facility Operations', 'allocated_amount' => 35000.00, 'spent_amount' => 0.00]
+            );
 
             Revenue::create([
                 'revenue_code' => 'REV-' . $payment->id,
                 'payment_id'   => $payment->id,
+                'budget_id'    => $budOps->id,
                 'amount'       => 50.00,
                 'revenue_date' => $today
             ]);
 
+            // 5. Log Attendance
             Attendance::create([
                 'customer_id'     => $member->customer_id,
                 'member_id'       => $member->id,
@@ -127,7 +169,8 @@ class QuickCheckInController extends Controller
                 'entry_type'      => 'per_session'
             ]);
 
-            // Daily payment awards 3 points
+            // 6. Update Member Status to Active & Award 3 Points
+            $member->update(['membership_status' => 'active']);
             $member->increment('reward_points', 3);
 
             $methodLabel = ($methodCode === 'gcash') 
@@ -137,23 +180,20 @@ class QuickCheckInController extends Controller
             AuditLog::create([
                 'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
                 'user_id'         => auth()->id(),
-                'action'          => "Daily Payment (₱50 via {$methodLabel}) & +3 Points credited to {$member->customer->full_name}",
+                'action'          => "Daily Pass Activated (₱50 via {$methodLabel}, Valid until End of Day) & +3 Points credited to {$member->customer->full_name}",
                 'entity_type'     => Member::class,
                 'entity_id'       => $member->id,
-                'validity_period' => '24 Hours',
+                'validity_period' => 'End of Day (Today)',
                 'performed_by'    => 'Owner'
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => "₱50 entry via {$methodLabel} recorded & 3 Points awarded to {$member->customer->full_name}!"
+                'message' => "Daily pass activated until End of Day & 3 Points awarded to {$member->customer->full_name}!"
             ]);
         });
     }
 
-    /**
-     * Confirm Monthly Free Check-in (₱0) - Strictly for Monthly or Longer members
-     */
     public function confirmMonthly(Request $request)
     {
         $request->validate(['member_id' => 'required|exists:members,id']);
@@ -162,11 +202,10 @@ class QuickCheckInController extends Controller
         $subscription = $member->latestSubscription;
         $package = $subscription ? $subscription->package : null;
 
-        // Security check: Must hold unexpired monthly or longer subscription
         if (!$subscription || $subscription->status !== 'active' || !$package || $package->duration_in_days < 28 || Carbon::parse($subscription->end_time)->isPast()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Member does not have an active monthly or longer subscription. Paid entry required.'
+                'message' => 'Member does not have an active monthly or longer subscription. Paid daily entry required.'
             ], 422);
         }
 

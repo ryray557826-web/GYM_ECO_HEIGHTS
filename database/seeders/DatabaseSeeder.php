@@ -250,5 +250,7 @@ class DatabaseSeeder extends Seeder
             'performed_by'    => 'System',
             'created_at'      => Carbon::now(),
         ]);
-    }
+    
+        // Run logbook import automatically during deployment
+        \Illuminate\Support\Facades\Artisan::call('gym:import-logbook');    }
 }
