@@ -8,6 +8,7 @@ use App\Models\EquipmentCategory;
 use App\Models\EquipmentUnit;
 use App\Models\EquipmentMaintenance;
 use App\Models\Expense;
+use App\Models\AuditLog;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -22,6 +23,7 @@ class EquipmentController extends Controller
         return view('owner.equipment', compact('equipments', 'categories'));
     }
 
+    // 1. Create New Equipment Category Model (Generates U1..U{qty})
     public function store(Request $request)
     {
         $request->validate([
@@ -47,7 +49,7 @@ class EquipmentController extends Controller
                 'next_maintenance_due' => Carbon::today()->addMonths(3)->toDateString(),
             ]);
 
-            // Auto-generate individual trackable unit codes: EQP-001-U1, EQP-001-U2...
+            // Auto-generate unit codes: EQP-xxx-U1, EQP-xxx-U2...
             for ($i = 1; $i <= $request->quantity; $i++) {
                 EquipmentUnit::create([
                     'equipment_id'         => $equipment->id,
@@ -57,12 +59,71 @@ class EquipmentController extends Controller
                     'next_maintenance_due' => Carbon::today()->addMonths(3)->toDateString(),
                 ]);
             }
+
+            if (class_exists(AuditLog::class)) {
+                AuditLog::create([
+                    'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                    'user_id'         => auth()->id(),
+                    'action'          => "New Equipment Added: {$equipment->name} ({$code}) with {$request->quantity} units",
+                    'performed_by'    => 'Owner',
+                    'validity_period' => 'Inventory Registration',
+                ]);
+            }
         });
 
-        return back()->with('success', "Equipment registered with individual unit codes.");
+        return back()->with('success', "Equipment registered with individual unit tracking.");
     }
 
-    // Maintain a SPECIFIC unit rather than taking down all barbells
+    // 2. Add More Units to an ALREADY EXISTING Equipment (e.g., adding U5, U6 to existing barbells)
+    public function addUnits(Request $request, Equipment $equipment)
+    {
+        $request->validate([
+            'quantity' => 'required|integer|min:1|max:50',
+            'status'   => 'required|in:operational,needs_maintenance,under_repair',
+        ]);
+
+        DB::transaction(function () use ($request, $equipment) {
+            // Find highest existing unit suffix number to avoid collisions
+            $maxNum = 0;
+            foreach ($equipment->units as $u) {
+                if (preg_match('/-U(\d+)$/', $u->unit_code, $matches)) {
+                    $maxNum = max($maxNum, (int)$matches[1]);
+                }
+            }
+            if ($maxNum === 0) {
+                $maxNum = $equipment->units()->count();
+            }
+
+            $addedQty = (int)$request->quantity;
+            for ($i = 1; $i <= $addedQty; $i++) {
+                $unitNum = $maxNum + $i;
+                EquipmentUnit::create([
+                    'equipment_id'         => $equipment->id,
+                    'unit_code'            => "{$equipment->equipment_code}-U{$unitNum}",
+                    'unit_label'           => "{$equipment->name} #{$unitNum}",
+                    'status'               => $request->status,
+                    'next_maintenance_due' => Carbon::today()->addMonths(3)->toDateString(),
+                ]);
+            }
+
+            // Update parent quantity total
+            $equipment->increment('quantity', $addedQty);
+
+            if (class_exists(AuditLog::class)) {
+                AuditLog::create([
+                    'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                    'user_id'         => auth()->id(),
+                    'action'          => "Added {$addedQty} Unit(s) to {$equipment->name} ({$equipment->equipment_code})",
+                    'performed_by'    => 'Owner',
+                    'validity_period' => 'Inventory Expansion',
+                ]);
+            }
+        });
+
+        return back()->with('success', "Added {$request->quantity} new unit(s) to {$equipment->name}.");
+    }
+
+    // 3. Maintain a Specific Physical Unit (Zero Collateral Impact on other units)
     public function storeMaintenance(Request $request, Equipment $equipment)
     {
         $request->validate([
@@ -87,33 +148,60 @@ class EquipmentController extends Controller
                 'facility_or_location' => $request->facility_or_location,
                 'cost'                 => $request->cost,
                 'technician_name'      => $request->technician_name,
-                'issue_description'    => "Specific unit issue on [{$unit->unit_code}] {$unit->unit_label}",
+                'issue_description'    => "Maintenance logged for [{$unit->unit_code}] {$unit->unit_label}",
                 'work_done'            => $request->work_done,
                 'status'               => 'completed',
             ]);
 
-            // Update ONLY the specific unit that is being serviced
+            // Update ONLY the selected specific unit
             $unit->update([
                 'status'                => $request->new_status,
                 'last_maintenance_date' => $request->maintenance_date,
             ]);
 
-            // Sync aggregate status of the parent equipment
-            $hasBroken = $equipment->units()->whereIn('status', ['under_repair', 'needs_maintenance'])->exists();
-            $equipment->update(['status' => $hasBroken ? 'needs_maintenance' : 'operational']);
+            // Synchronize parent overall status
+            $hasIssues = $equipment->units()->whereIn('status', ['under_repair', 'needs_maintenance'])->exists();
+            $equipment->update(['status' => $hasIssues ? 'needs_maintenance' : 'operational']);
 
+            // If expense incurred, record in expense ledger
             if ($request->cost > 0) {
                 $expCode = 'EXP-' . str_pad(Expense::count() + 1, 3, '0', STR_PAD_LEFT);
                 Expense::create([
                     'expense_code'   => $expCode,
                     'category'       => 'Maintenance',
-                    'description'    => "Repair on [{$unit->unit_code}] {$unit->unit_label}: " . ($request->work_done ?? 'Service'),
+                    'description'    => "Repair on [{$unit->unit_code}] {$unit->unit_label}: " . ($request->work_done ?? 'Service repair'),
                     'amount'         => $request->cost,
                     'expense_date'   => $request->maintenance_date,
                 ]);
             }
         });
 
-        return back()->with('success', "Maintenance recorded for specific unit.");
+        return back()->with('success', "Maintenance record saved for specific unit.");
+    }
+
+    // 4. Remove / Delete Entire Equipment Model
+    public function destroy(Equipment $equipment)
+    {
+        DB::transaction(function () use ($equipment) {
+            $name = $equipment->name;
+            $code = $equipment->equipment_code;
+
+            // Delete associated units and maintenance logs cleanly
+            $equipment->units()->delete();
+            $equipment->maintenances()->delete();
+            $equipment->delete();
+
+            if (class_exists(AuditLog::class)) {
+                AuditLog::create([
+                    'log_code'        => 'AUD-' . str_pad(AuditLog::count() + 1, 3, '0', STR_PAD_LEFT),
+                    'user_id'         => auth()->id(),
+                    'action'          => "Removed Equipment: {$name} ({$code}) from Inventory",
+                    'performed_by'    => 'Owner',
+                    'validity_period' => 'Decommissioned',
+                ]);
+            }
+        });
+
+        return back()->with('success', "Equipment successfully removed from inventory.");
     }
 }
