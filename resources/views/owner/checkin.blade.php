@@ -435,7 +435,10 @@ function processMonthlyCheckin() {
     fetch("{{ route('owner.quickCheckIn.monthly') }}", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-TOKEN": "{{ csrf_token() }}" },
-        body: JSON.stringify({ user_id: activeLookupMember.id })
+        body: JSON.stringify({ 
+            member_id: activeLookupMember.id, // Fixed: sends member_id
+            user_id: activeLookupMember.id 
+        })
     }).then(() => location.reload());
 }
 </script>

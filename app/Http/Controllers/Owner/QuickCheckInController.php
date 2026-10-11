@@ -194,10 +194,11 @@ class QuickCheckInController extends Controller
         });
     }
 
-    public function confirmMonthly(Request $request)
+  public function confirmMonthly(Request $request)
     {
-        $request->validate(['member_id' => 'required|exists:members,id']);
-        $member = Member::with(['customer', 'latestSubscription.package'])->findOrFail($request->member_id);
+        $memberId = $request->member_id ?? $request->user_id;
+
+        $member = Member::with(['customer', 'latestSubscription.package'])->findOrFail($memberId);
 
         $subscription = $member->latestSubscription;
         $package = $subscription ? $subscription->package : null;

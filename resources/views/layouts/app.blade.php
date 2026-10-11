@@ -12,6 +12,33 @@
     <style>
         body { background-color: #080d1a; color: #f3f4f6; font-family: 'Inter', sans-serif; }
         .font-heading { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.04em; }
+
+        /* Smooth mobile momentum scrolling for all tables & tabs */
+        .overflow-x-auto {
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* Clean custom scrollbar */
+        ::-webkit-scrollbar {
+            height: 6px;
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #080d1a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #334155;
+        }
+
+        /* Invert native date picker icon for dark theme */
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(0.8);
+            cursor: pointer;
+        }
     </style>
 </head>
 <body class="min-h-screen flex flex-col antialiased">
