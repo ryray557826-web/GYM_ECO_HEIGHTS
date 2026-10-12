@@ -14,7 +14,8 @@
     @endif
 
     <div class="space-y-6">
-        <!-- Financial Metrics -->
+        
+        <!-- Summary Financial Metric Cards -->
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl p-5 shadow">
                 <span class="text-xs uppercase font-heading font-semibold text-gray-400 tracking-wider">TOTAL REVENUE</span>
@@ -32,72 +33,126 @@
             </div>
         </div>
 
-        <!-- 6-Month Chart (Completely Flat / 0 if no transactions exist) -->
+        <!-- 6-Month Chart (Renders Actual Database Totals; Flat at ₱0 if no records) -->
         <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl p-6 shadow">
             <h3 class="text-xs font-heading font-extrabold uppercase tracking-wider text-white mb-4">
-                6-MONTH REVENUE VS EXPENSES
+                6-MONTH REVENUE VS EXPENSES ANALYTICS
             </h3>
             <div class="relative h-64">
                 <canvas id="financeRevenueChart"></canvas>
             </div>
         </div>
 
-        <!-- Expenses Ledger -->
-        <div class="space-y-3">
-            <div class="flex justify-between items-center">
-                <h3 class="text-xs font-heading font-extrabold uppercase tracking-wider text-white">EXPENSE RECORDS</h3>
-                <button onclick="document.getElementById('addExpenseModal').showModal()" 
-                    class="bg-[#76c800] hover:bg-[#68b000] text-black font-extrabold px-3 py-1.5 rounded text-xs uppercase font-heading">
-                    + Add Expense
-                </button>
+        <!-- Two-Column Itemized Ledgers: Revenue & Expenses -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+            <!-- Left: Itemized Revenue Ledger -->
+            <div class="lg:col-span-6 space-y-3">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-xs font-heading font-extrabold uppercase tracking-wider text-white">
+                        ITEMIZED REVENUE RECORDS
+                    </h3>
+                    <span class="text-[11px] font-mono text-emerald-400">Total: ₱{{ number_format($totalRevenue, 2) }}</span>
+                </div>
+
+                <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl overflow-x-auto shadow">
+                    <table class="w-full text-left text-xs font-mono">
+                        <thead class="bg-[#080d1a] text-gray-400 uppercase font-heading text-[10px]">
+                            <tr>
+                                <th class="p-3">CODE</th>
+                                <th class="p-3">MEMBER</th>
+                                <th class="p-3">TYPE</th>
+                                <th class="p-3">AMOUNT</th>
+                                <th class="p-3 text-right">DATE</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-[#1e293b] text-gray-300">
+                            @forelse($revenues as $rev)
+                            <tr>
+                                <td class="p-3 text-gray-400">{{ $rev->payment_code }}</td>
+                                <td class="p-3 font-sans font-semibold text-white">
+                                    {{ $rev->customer ? $rev->customer->full_name : ($rev->member ? $rev->member->member_code : 'Cashier') }}
+                                </td>
+                                <td class="p-3 font-sans text-xs">
+                                    {{ $rev->payment_type === 'monthly_subscription' ? 'Subscription' : 'Daily' }}
+                                </td>
+                                <td class="p-3 text-[#76c800] font-bold">₱{{ number_format($rev->amount, 2) }}</td>
+                                <td class="p-3 text-right text-gray-400">{{ $rev->created_at->format('Y-m-d') }}</td>
+                            </tr>
+                            @empty
+                            <tr>
+                                <td colspan="5" class="p-4 text-center text-gray-500 font-sans italic">No verified revenue entries yet.</td>
+                            </tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+                <div>
+                    {{ $revenues->links() }}
+                </div>
             </div>
 
-            <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl overflow-x-auto shadow">
-                <table class="w-full text-left text-xs">
-                    <thead class="bg-[#080d1a] text-gray-400 uppercase font-heading text-[11px]">
-                        <tr>
-                            <th class="p-3">ID</th>
-                            <th class="p-3">CATEGORY</th>
-                            <th class="p-3">DESCRIPTION</th>
-                            <th class="p-3">AMOUNT</th>
-                            <th class="p-3">DATE</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-[#1e293b] text-gray-300 font-mono">
-                        @forelse($expenses as $exp)
-                        <tr>
-                            <td class="p-3 text-gray-400">{{ $exp->expense_code }}</td>
-                            <td class="p-3 font-sans">{{ $exp->category }}</td>
-                            <td class="p-3 font-sans font-bold text-white">{{ $exp->description }}</td>
-                            <td class="p-3 text-[#e14b4b] font-bold">₱{{ number_format($exp->amount, 2) }}</td>
-                            <td class="p-3">{{ $exp->expense_date }}</td>
-                        </tr>
-                        @empty
-                        <tr>
-                            <td colspan="5" class="p-4 text-center text-gray-500 font-sans italic">No expenses logged yet.</td>
-                        </tr>
-                        @endforelse
-                    </tbody>
-                </table>
+            <!-- Right: Itemized Expenses Ledger -->
+            <div class="lg:col-span-6 space-y-3">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-xs font-heading font-extrabold uppercase tracking-wider text-white">
+                        ITEMIZED EXPENSE RECORDS
+                    </h3>
+                    <button onclick="document.getElementById('addExpenseModal').showModal()" 
+                        class="bg-[#76c800] hover:bg-[#68b000] text-black font-extrabold px-3 py-1 rounded text-xs uppercase font-heading transition">
+                        + Add Expense
+                    </button>
+                </div>
+
+                <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl overflow-x-auto shadow">
+                    <table class="w-full text-left text-xs font-mono">
+                        <thead class="bg-[#080d1a] text-gray-400 uppercase font-heading text-[10px]">
+                            <tr>
+                                <th class="p-3">CODE</th>
+                                <th class="p-3">CATEGORY</th>
+                                <th class="p-3">DESCRIPTION</th>
+                                <th class="p-3">AMOUNT</th>
+                                <th class="p-3 text-right">DATE</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-[#1e293b] text-gray-300">
+                            @forelse($expenses as $exp)
+                            <tr>
+                                <td class="p-3 text-gray-400">{{ $exp->expense_code }}</td>
+                                <td class="p-3 font-sans">{{ $exp->category }}</td>
+                                <td class="p-3 font-sans font-semibold text-white">{{ $exp->description }}</td>
+                                <td class="p-3 text-[#e14b4b] font-bold">₱{{ number_format($exp->amount, 2) }}</td>
+                                <td class="p-3 text-right text-gray-400">{{ $exp->expense_date }}</td>
+                            </tr>
+                            @empty
+                            <tr>
+                                <td colspan="5" class="p-4 text-center text-gray-500 font-sans italic">No expenses recorded yet.</td>
+                            </tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+                <div>
+                    {{ $expenses->links() }}
+                </div>
             </div>
-            <div>
-                {{ $expenses->links() }}
-            </div>
+
         </div>
+
     </div>
 </div>
 
-<!-- Modal: Add Expense (With clickable calendar) -->
+<!-- Modal: Add Expense Dialog (Clickable Calendar) -->
 <dialog id="addExpenseModal" class="bg-[#0f172a] border border-[#1e293b] text-white p-6 rounded-2xl max-w-md w-full shadow-2xl backdrop:bg-black/80">
     <div class="flex justify-between items-center pb-3 border-b border-[#1e293b] mb-4">
         <h3 class="text-sm font-heading font-extrabold uppercase tracking-wider text-white">+ Record Gym Expense</h3>
         <button onclick="document.getElementById('addExpenseModal').close()" class="text-gray-400 hover:text-white">✕</button>
     </div>
-    <form action="{{ route('owner.expenses.store') }}" method="POST" class="space-y-3 text-xs">
+    <form action="{{ route('owner.expenses.store') }}" method="POST" class="space-y-3.5 text-xs">
         @csrf
         <div>
-            <label class="block text-gray-400 mb-1">Category</label>
-            <select name="category" class="w-full bg-[#080d1a] border border-[#1e293b] rounded p-2 text-white">
+            <label class="block text-gray-400 mb-1 font-semibold">Expense Category *</label>
+            <select name="category" class="w-full bg-[#080d1a] border border-[#1e293b] rounded-lg p-2.5 text-white">
                 <option value="Equipment">Equipment Purchase</option>
                 <option value="Maintenance">Maintenance Costs</option>
                 <option value="Damages">Damages & Repairs</option>
@@ -106,31 +161,32 @@
             </select>
         </div>
         <div>
-            <label class="block text-gray-400 mb-1">Description *</label>
-            <input type="text" name="description" placeholder="e.g. Treadmill belt replacement" required 
-                class="w-full bg-[#080d1a] border border-[#1e293b] rounded p-2 text-white">
+            <label class="block text-gray-400 mb-1 font-semibold">Description *</label>
+            <input type="text" name="description" placeholder="e.g. Broken cable replacement, Cleaning supplies" required 
+                class="w-full bg-[#080d1a] border border-[#1e293b] rounded-lg p-2.5 text-white">
         </div>
         <div class="grid grid-cols-2 gap-3">
             <div>
-                <label class="block text-gray-400 mb-1">Amount (₱) *</label>
+                <label class="block text-gray-400 mb-1 font-semibold">Amount (₱) *</label>
                 <input type="number" step="0.01" name="amount" placeholder="0.00" required 
-                    class="w-full bg-[#080d1a] border border-[#1e293b] rounded p-2 text-white font-mono">
+                    class="w-full bg-[#080d1a] border border-[#1e293b] rounded-lg p-2.5 text-white font-mono">
             </div>
             <div>
-                <label class="block text-gray-400 mb-1">Date</label>
+                <label class="block text-gray-400 mb-1 font-semibold">Date *</label>
                 <input type="date" name="expense_date" value="{{ date('Y-m-d') }}" onclick="this.showPicker()" required 
-                    class="w-full bg-[#080d1a] border border-[#1e293b] rounded p-2 text-white font-mono cursor-pointer">
+                    class="w-full bg-[#080d1a] border border-[#1e293b] rounded-lg p-2.5 text-white font-mono cursor-pointer">
             </div>
         </div>
         <div class="flex justify-end gap-2 pt-3 border-t border-[#1e293b]">
-            <button type="button" onclick="document.getElementById('addExpenseModal').close()" class="px-3 py-1.5 border border-gray-800 text-gray-300 rounded">Cancel</button>
-            <button type="submit" class="px-4 py-1.5 bg-[#76c800] text-black font-extrabold rounded uppercase font-heading">Save Expense</button>
+            <button type="button" onclick="document.getElementById('addExpenseModal').close()" class="px-3.5 py-2 border border-gray-800 text-gray-300 rounded-lg">Cancel</button>
+            <button type="submit" class="px-4 py-2 bg-[#76c800] hover:bg-[#68b000] text-black font-extrabold rounded-lg uppercase font-heading transition">Save Expense</button>
         </div>
     </form>
 </dialog>
 
 @push('scripts')
 <script>
+// Dynamic Chart Initialization (Reads real values from Controller)
 document.addEventListener("DOMContentLoaded", () => {
     const el = document.getElementById('financeRevenueChart');
     if (el) {
@@ -139,8 +195,18 @@ document.addEventListener("DOMContentLoaded", () => {
             data: {
                 labels: {!! json_encode($chartLabels ?? ['May','Jun','Jul','Aug','Sep','Oct']) !!},
                 datasets: [
-                    { label: 'Revenue', data: {!! json_encode($chartRevenue ?? [0,0,0,0,0,0]) !!}, backgroundColor: '#76c800', borderRadius: 4 },
-                    { label: 'Expenses', data: {!! json_encode($chartExpenses ?? [0,0,0,0,0,0]) !!}, backgroundColor: '#dc2626', borderRadius: 4 }
+                    { 
+                        label: 'Revenue', 
+                        data: {!! json_encode($chartRevenue ?? [0,0,0,0,0,0]) !!}, 
+                        backgroundColor: '#76c800', 
+                        borderRadius: 4 
+                    },
+                    { 
+                        label: 'Expenses', 
+                        data: {!! json_encode($chartExpenses ?? [0,0,0,0,0,0]) !!}, 
+                        backgroundColor: '#dc2626', 
+                        borderRadius: 4 
+                    }
                 ]
             },
             options: {
@@ -149,7 +215,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 plugins: { legend: { display: false } },
                 scales: {
                     x: { grid: { display: false }, ticks: { color: '#6b7280' } },
-                    y: { grid: { color: '#1e293b' }, ticks: { color: '#6b7280', callback: v => '₱' + (v / 1000) + 'k' } }
+                    y: { 
+                        grid: { color: '#1e293b' }, 
+                        ticks: { color: '#6b7280', callback: v => '₱' + (v >= 1000 ? (v / 1000) + 'k' : v) } 
+                    }
                 }
             }
         });

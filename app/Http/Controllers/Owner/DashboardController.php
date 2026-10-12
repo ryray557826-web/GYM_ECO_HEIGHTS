@@ -13,19 +13,18 @@ use App\Services\FirebaseService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 class DashboardController extends Controller
 {
     /**
-     * Display the Owner Check-in & Operations Dashboard
+     * Display Front-Desk Check-In and High-Level Revenue Analytics
      */
     public function index()
     {
         $startOfYear = Carbon::now()->startOfYear()->toDateString();
-        $endOfYear = Carbon::now()->endOfYear()->toDateString();
+        $endOfYear   = Carbon::now()->endOfYear()->toDateString();
 
-        // 1. Calculate Real Financial Metrics
+        // 1. Calculate Real Financial Metrics (Stored Procedure with Eloquent Fallback)
         try {
             DB::statement("CALL CalculateProfitLossSummary('{$startOfYear}', '{$endOfYear}', @rev, @exp, @net, @ratio)");
             $spResult = DB::select("SELECT @rev AS total_revenue, @exp AS total_expenses, @net AS net_income, @ratio AS profit_loss_ratio")[0];
@@ -35,13 +34,14 @@ class DashboardController extends Controller
             $netIncome     = (float) ($spResult->net_income ?? 0);
             $ratio         = (float) ($spResult->profit_loss_ratio ?? 0);
         } catch (\Exception $e) {
+            // Lifetime verified revenue calculation
             $totalRevenue  = (float) Payment::where('status', 'verified')->sum('amount');
             $totalExpenses = (float) Expense::sum('amount');
             $netIncome     = $totalRevenue - $totalExpenses;
             $ratio         = $totalRevenue > 0 ? round($netIncome / $totalRevenue, 4) : 0.0;
         }
 
-        // 2. Real 6-Month Chart Data (Defaults to 0 if no transactions exist)
+        // 2. Real 6-Month Chart Data for Front Page
         $chartLabels = [];
         $chartRevenue = [];
         $chartExpenses = [];
@@ -55,17 +55,25 @@ class DashboardController extends Controller
             $chartRevenue[] = (float) Payment::where('status', 'verified')
                 ->whereBetween('created_at', [$start . ' 00:00:00', $end . ' 23:59:59'])
                 ->sum('amount');
-            $chartExpenses[] = (float) Expense::whereBetween('expense_date', [$start, $end])->sum('amount');
+            $chartExpenses[] = (float) Expense::whereBetween('expense_date', [$start, $end])
+                ->sum('amount');
         }
 
+        // 3. Member & Pending Counts
         $activeMembersCount   = Member::where('membership_status', 'active')->count();
         $pendingPaymentsCount = Payment::where('status', 'pending')->count();
-        $pendingMembersCount  = Member::where('membership_status', 'pending')->count();
+        $pendingMembersCount  = Member::where('verification_status', 'pending')->count();
         $pendingCount         = $pendingPaymentsCount + $pendingMembersCount;
 
-        $todayDate         = Carbon::today()->toDateString();
-        $todayEntries      = Attendance::where('attendance_date', $todayDate)->with(['customer', 'member'])->orderBy('check_in_time', 'desc')->get();
-        $recentPerSession  = Attendance::where('entry_type', 'per_session')
+        // 4. Attendance Entries for Today
+        $todayDate = Carbon::today()->toDateString();
+        $todayEntries = Attendance::where('attendance_date', $todayDate)
+            ->with(['customer', 'member'])
+            ->orderBy('check_in_time', 'desc')
+            ->get();
+
+        // 5. Recent Walk-In Entries
+        $recentPerSession = Attendance::where('entry_type', 'per_session')
             ->with(['customer', 'member', 'payment'])
             ->latest('attendance_date')
             ->latest('check_in_time')
@@ -86,9 +94,7 @@ class DashboardController extends Controller
             'recentPerSession'
         ));
     }
-    /**
-     * Display the Full Tabular Attendance Log Sheet
-     */
+
     public function attendanceLogs(Request $request)
     {
         $query = Attendance::with(['customer', 'member.latestSubscription.package'])
@@ -104,18 +110,12 @@ class DashboardController extends Controller
         return view('owner.attendance', compact('attendances'));
     }
 
-    /**
-     * Display the System Audit Trail Logs
-     */
     public function auditLogs()
     {
         $auditLogs = AuditLog::with('user')->latest()->paginate(25);
         return view('owner.audit-logs', compact('auditLogs'));
     }
 
-    /**
-     * Publish a Gym Announcement (Saved locally and synced to Firebase)
-     */
     public function storeAnnouncement(Request $request)
     {
         $request->validate([
@@ -132,7 +132,6 @@ class DashboardController extends Controller
             'posted_by_user_id' => auth()->id(),
         ]);
 
-        // Optional cloud sync to Firebase Firestore
         try {
             $firebase = new FirebaseService();
             $firebase->addDocument('announcements', [
@@ -141,9 +140,7 @@ class DashboardController extends Controller
                 'message'     => $announcement->message,
                 'posted_date' => $announcement->posted_date->toDateString(),
             ]);
-        } catch (\Exception $e) {
-            // Fail gracefully if running offline
-        }
+        } catch (\Exception $e) {}
 
         if (class_exists(AuditLog::class)) {
             AuditLog::create([
@@ -158,9 +155,6 @@ class DashboardController extends Controller
         return back()->with('success', 'Announcement published and attached live to member dashboards.');
     }
 
-    /**
-     * Delete an Announcement
-     */
     public function destroyAnnouncement(Announcement $announcement)
     {
         $announcement->delete();
