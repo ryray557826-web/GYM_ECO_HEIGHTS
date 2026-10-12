@@ -14,6 +14,11 @@ class Expense extends Model
     // Allows all fields (expense_code, budget_id, maintenance_id, etc.)
     protected $guarded = [];
 
+    protected $casts = [
+        'expense_date' => 'date',   // ← this is the important fix
+        'amount'       => 'float',
+    ];
+
     public function budget()
     {
         return $this->belongsTo(Budget::class);

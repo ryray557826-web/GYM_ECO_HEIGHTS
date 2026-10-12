@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\Customer;
 use App\Models\Member;
 use App\Models\Payment;
+use App\Models\Revenue;
 use App\Models\Expense;
 use Illuminate\Support\Facades\Hash;
 use Carbon\Carbon;
@@ -15,7 +16,7 @@ use Carbon\Carbon;
 class SyncFirebase extends Command
 {
     protected $signature = 'firebase:sync';
-    protected $description = 'Sync revenues/expenses to Firebase and restore all members from cloud';
+    protected $description = 'Sync all revenues and expenses to Firebase and restore all members from cloud';
 
     public function handle()
     {
@@ -56,7 +57,10 @@ class SyncFirebase extends Command
                     'category'     => $e->category,
                     'description'  => $e->description,
                     'amount'       => (float) $e->amount,
-                    'expense_date' => $e->expense_date ? $e->expense_date->format('Y-m-d') : date('Y-m-d'),
+                    // Safe version – works whether expense_date is string or Carbon
+                    'expense_date' => $e->expense_date
+                        ? Carbon::parse($e->expense_date)->format('Y-m-d')
+                        : date('Y-m-d'),
                 ]);
                 $expCount++;
             }
@@ -76,31 +80,25 @@ class SyncFirebase extends Command
                 if (!$existing) {
                     $email = !empty($cm['email']) ? $cm['email'] : strtolower($memberCode) . '@ecoheights.local';
 
-                    $user = User::firstOrCreate(
-                        ['email' => $email],
-                        [
-                            'name'              => $cm['name'],
-                            'password'          => Hash::make('pass123'),
-                            'role'              => 'member',
-                            'account_status'    => 'active',
-                            'email_verified_at' => Carbon::now(),
-                        ]
-                    );
+                    $user = User::firstOrCreate(['email' => $email], [
+                        'name'              => $cm['name'],
+                        'password'          => Hash::make('pass123'),
+                        'role'              => 'member',
+                        'account_status'    => 'active',
+                        'email_verified_at' => Carbon::now(),
+                    ]);
 
                     $nameParts = explode(' ', trim($cm['name']));
-                    $last  = count($nameParts) > 1 ? array_pop($nameParts) : 'Member';
+                    $last = count($nameParts) > 1 ? array_pop($nameParts) : 'Member';
                     $first = count($nameParts) > 0 ? implode(' ', $nameParts) : 'User';
 
-                    $customer = Customer::firstOrCreate(
-                        ['email' => $email],
-                        [
-                            'user_id'        => $user->id,
-                            'first_name'     => $first,
-                            'last_name'      => $last,
-                            'contact_number' => $cm['contact_number'] ?: '09531704928',
-                            'address'        => 'Davao City',
-                        ]
-                    );
+                    $customer = Customer::firstOrCreate(['email' => $email], [
+                        'user_id'        => $user->id,
+                        'first_name'     => $first,
+                        'last_name'      => $last,
+                        'contact_number' => $cm['contact_number'] ?: '09531704928',
+                        'address'        => 'Davao City',
+                    ]);
 
                     Member::create([
                         'customer_id'         => $customer->id,
@@ -115,12 +113,11 @@ class SyncFirebase extends Command
                 }
             }
 
-            $this->info("✓ Restored and verified {$recovered} members from Firebase (Total cloud members: " . count($cloudMembers) . ")");
+            $this->info("✓ Restored and verified {$recovered} members from Firebase into live website (Total: " . count($cloudMembers) . " members)!");
             $this->info('Cloud synchronization completed successfully!');
 
         } catch (\Exception $e) {
             $this->error('Error during cloud sync: ' . $e->getMessage());
-            \Log::error('firebase:sync failed → ' . $e->getMessage());
         }
 
         return 0;
