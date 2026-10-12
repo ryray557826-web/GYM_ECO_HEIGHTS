@@ -96,9 +96,38 @@ class PromoController extends Controller
         return back()->with('success', "Package {$package->name} is now {$status}.");
     }
 
-    public function destroy(Package $package)
+    /**
+     * Safe delete with confirmation for packages that are in use
+     */
+    public function destroy(Request $request, Package $package)
     {
-        $package->delete();
-        return back()->with('success', "Package removed.");
+        $subscriptionCount = $package->subscriptions()->count();
+
+        // If people are using this package and force is NOT confirmed
+        if ($subscriptionCount > 0 && !$request->boolean('force')) {
+            return back()->with('error', 
+                "Cannot delete \"{$package->name}\". It is currently used by {$subscriptionCount} member subscription(s). " .
+                "If you really want to delete it, click the Force Delete button."
+            );
+        }
+
+        // Force delete confirmed or no one is using it
+        DB::transaction(function () use ($package, $subscriptionCount) {
+            if ($subscriptionCount > 0) {
+                // Delete related subscriptions first
+                $package->subscriptions()->delete();
+            }
+
+            // Also delete features if any
+            $package->features()->delete();
+
+            $package->delete();
+        });
+
+        $message = $subscriptionCount > 0
+            ? "Package \"{$package->name}\" and its {$subscriptionCount} subscription(s) have been permanently deleted."
+            : "Package \"{$package->name}\" has been removed.";
+
+        return back()->with('success', $message);
     }
 }

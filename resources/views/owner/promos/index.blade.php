@@ -13,6 +13,13 @@
         </div>
     @endif
 
+    @if(session('error'))
+        <div class="bg-rose-950/80 border border-rose-500/40 text-rose-400 px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between">
+            <span>⚠ {{ session('error') }}</span>
+            <button onclick="this.parentElement.remove()" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+    @endif
+
     <!-- Top Action Bar -->
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
@@ -64,20 +71,37 @@
                             {{ $pkg->is_active ? 'ACTIVE' : 'INACTIVE' }}
                         </span>
                     </td>
-                    <td class="p-3.5 text-right space-x-2">
+                    <td class="p-3.5 text-right space-x-2 whitespace-nowrap">
                         <button onclick="openEditPromoModal({{ json_encode($pkg) }})" class="text-xs text-slate-300 hover:text-white underline">
                             Edit
                         </button>
+
                         <form action="{{ route('owner.promos.toggle', $pkg->id) }}" method="POST" class="inline">
                             @csrf
                             <button type="submit" class="text-xs {{ $pkg->is_active ? 'text-amber-400 hover:text-amber-300' : 'text-emerald-400 hover:text-emerald-300' }}">
                                 {{ $pkg->is_active ? 'Deactivate' : 'Activate' }}
                             </button>
                         </form>
-                        <form action="{{ route('owner.promos.destroy', $pkg->id) }}" method="POST" class="inline" onsubmit="return confirm('Delete this package?')">
+
+                        <!-- Normal Delete -->
+                        <form action="{{ route('owner.promos.destroy', $pkg->id) }}" method="POST" class="inline"
+                              onsubmit="return confirm('Are you sure you want to delete this package?')">
                             @csrf
                             @method('DELETE')
-                            <button type="submit" class="text-xs text-rose-400 hover:text-rose-300">Delete</button>
+                            <button type="submit" class="text-xs text-rose-400 hover:text-rose-300">
+                                Delete
+                            </button>
+                        </form>
+
+                        <!-- Force Delete (only shown when needed, or always available) -->
+                        <form action="{{ route('owner.promos.destroy', $pkg->id) }}" method="POST" class="inline"
+                              onsubmit="return confirm('⚠️ FORCE DELETE\n\nThis package is used by members.\nThis will also delete all related subscriptions.\n\nAre you absolutely sure?')">
+                            @csrf
+                            @method('DELETE')
+                            <input type="hidden" name="force" value="1">
+                            <button type="submit" class="text-xs text-rose-600 hover:text-rose-500 font-bold">
+                                Force Delete
+                            </button>
                         </form>
                     </td>
                 </tr>
