@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class FirebaseService
 {
@@ -22,52 +23,54 @@ class FirebaseService
             $this->projectId = $this->credentials['project_id'] ?? env('FIREBASE_PROJECT_ID', 'eco-heights-gym-c200d');
         } else {
             $this->projectId = env('FIREBASE_PROJECT_ID', 'eco-heights-gym-c200d');
+            Log::warning('Firebase credentials file not found at: ' . $credPath);
         }
 
         $this->baseUrl = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents";
     }
-protected function getAccessToken(): ?string
-{
-    if (!$this->credentials) {
-        return null;
-    }
 
-    return Cache::remember('firebase_access_token', 3300, function () {
-        $now = time();
-
-        // Proper base64url encoding
-        $base64Url = function ($data) {
-            return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
-        };
-
-        $header = $base64Url(json_encode(['alg' => 'RS256', 'typ' => 'JWT']));
-        
-        $payload = $base64Url(json_encode([
-            'iss'   => $this->credentials['client_email'],
-            'scope' => 'https://www.googleapis.com/auth/datastore',
-            'aud'   => 'https://oauth2.googleapis.com/token',
-            'exp'   => $now + 3600,
-            'iat'   => $now,
-        ]));
-
-        $rawSignature = '';
-        openssl_sign("{$header}.{$payload}", $rawSignature, $this->credentials['private_key'], OPENSSL_ALGO_SHA256);
-        
-        $jwt = "{$header}.{$payload}." . $base64Url($rawSignature);
-
-        $response = Http::asForm()->post('https://oauth2.googleapis.com/token', [
-            'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-            'assertion'  => $jwt,
-        ]);
-
-        if (!$response->successful()) {
-            \Log::error('Firebase token error: ' . $response->body());
+    protected function getAccessToken(): ?string
+    {
+        if (!$this->credentials) {
             return null;
         }
 
-        return $response->json('access_token');
-    });
-}
+        return Cache::remember('firebase_access_token', 3300, function () {
+            $now = time();
+
+            // Correct base64url encoding
+            $base64Url = function ($data) {
+                return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+            };
+
+            $header = $base64Url(json_encode(['alg' => 'RS256', 'typ' => 'JWT']));
+            
+            $payload = $base64Url(json_encode([
+                'iss'   => $this->credentials['client_email'],
+                'scope' => 'https://www.googleapis.com/auth/datastore',
+                'aud'   => 'https://oauth2.googleapis.com/token',
+                'exp'   => $now + 3600,
+                'iat'   => $now,
+            ]));
+
+            $rawSignature = '';
+            openssl_sign("{$header}.{$payload}", $rawSignature, $this->credentials['private_key'], OPENSSL_ALGO_SHA256);
+            
+            $jwt = "{$header}.{$payload}." . $base64Url($rawSignature);
+
+            $response = Http::asForm()->post('https://oauth2.googleapis.com/token', [
+                'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+                'assertion'  => $jwt,
+            ]);
+
+            if (!$response->successful()) {
+                Log::error('Firebase token error: ' . $response->body());
+                return null;
+            }
+
+            return $response->json('access_token');
+        });
+    }
 
     protected function client()
     {
@@ -121,7 +124,6 @@ protected function getAccessToken(): ?string
         ]);
     }
 
-    // Sync Revenue into Firebase Firestore
     public function syncRevenue(array $data)
     {
         return $this->setDocument('revenues', $data['revenue_code'], [
@@ -133,7 +135,6 @@ protected function getAccessToken(): ?string
         ]);
     }
 
-    // Sync Expense into Firebase Firestore
     public function syncExpense(array $data)
     {
         return $this->setDocument('expenses', $data['expense_code'], [
@@ -147,12 +148,18 @@ protected function getAccessToken(): ?string
     }
 
     /**
-     * Fetch ALL members from Firestore with pageSize=300 (Fixes 20-doc cutoff)
+     * Fetch ALL members from Firestore
      */
     public function getAllCloudMembers(): array
     {
         $url = "{$this->baseUrl}/members?pageSize=300";
         $response = $this->client()->get($url);
+
+        if (!$response->successful()) {
+            Log::error('Firestore get members failed: ' . $response->status() . ' - ' . $response->body());
+            return [];
+        }
+
         $docs = $response->json('documents') ?? [];
 
         $members = [];
