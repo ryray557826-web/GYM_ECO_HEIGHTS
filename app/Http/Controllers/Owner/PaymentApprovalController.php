@@ -34,6 +34,7 @@ class PaymentApprovalController extends Controller
 
     /**
      * Verify an Online or Physical Member Payment
+     * FIXED: Now properly extends remaining days for advance payments
      */
     public function verify(Payment $payment)
     {
@@ -58,18 +59,19 @@ class PaymentApprovalController extends Controller
                 'revenue_date' => Carbon::today()->toDateString()
             ]);
 
-            // 2. Resolve Member (Direct or through Customer profile)
+            // 2. Resolve Member
             $member = $payment->member ?? ($payment->customer ? $payment->customer->member : null);
 
             $daysToAdd = 30;
             $pointsAwarded = 15;
             $isDaily = false;
+            $package = null;
 
             if ($payment->member_subscription_id && $payment->subscription && $payment->subscription->package) {
-                $pkg = $payment->subscription->package;
-                $daysToAdd = $pkg->duration_in_days;
+                $package = $payment->subscription->package;
+                $daysToAdd = $package->duration_in_days;
 
-                if ($pkg->plan_type === 'daily' || $daysToAdd <= 1) {
+                if ($package->plan_type === 'daily' || $daysToAdd <= 1) {
                     $isDaily = true;
                     $pointsAwarded = 3;
                 } elseif ($daysToAdd >= 365 || $payment->amount >= 7000) {
@@ -91,15 +93,62 @@ class PaymentApprovalController extends Controller
                 $member->update(['membership_status' => 'active']);
             }
 
-            // 3. Extend or Activate Subscription (Daily expires at end-of-day; longer passes add full days)
-            if ($payment->member_subscription_id && $payment->subscription) {
-                $newEndTime = $isDaily ? Carbon::today()->endOfDay() : Carbon::now()->addDays($daysToAdd);
+            // =====================================================
+            // 3. FIXED: Properly extend subscription for ADVANCE payments
+            // =====================================================
+            if ($member) {
+                // Find the current active subscription (if any)
+                $currentActiveSub = MemberSubscription::where('member_id', $member->id)
+                    ->where('status', 'active')
+                    ->where('end_time', '>', Carbon::now())
+                    ->orderByDesc('end_time')
+                    ->first();
 
-                $payment->subscription->update([
-                    'start_time' => Carbon::now(),
-                    'end_time'   => $newEndTime,
-                    'status'     => 'active'
-                ]);
+                if ($isDaily) {
+                    // Daily pass always expires at end of today
+                    $newStart = Carbon::now();
+                    $newEnd   = Carbon::today()->endOfDay();
+                } else {
+                    // ADVANCE PAYMENT LOGIC
+                    // If member still has remaining days → stack the new days on top
+                    if ($currentActiveSub) {
+                        $newStart = Carbon::parse($currentActiveSub->end_time);
+                        $newEnd   = (clone $newStart)->addDays($daysToAdd);
+                    } else {
+                        // No active pass → start from now
+                        $newStart = Carbon::now();
+                        $newEnd   = Carbon::now()->addDays($daysToAdd);
+                    }
+                }
+
+                // Update the subscription that was linked to this payment
+                // (or create a new one if none exists)
+                if ($payment->member_subscription_id && $payment->subscription) {
+                    $payment->subscription->update([
+                        'start_time' => $newStart,
+                        'end_time'   => $newEnd,
+                        'status'     => 'active',
+                        'package_id' => $package ? $package->id : $payment->subscription->package_id,
+                    ]);
+                } else {
+                    // Fallback: create a new active subscription
+                    $sub = MemberSubscription::create([
+                        'member_id'  => $member->id,
+                        'package_id' => $package ? $package->id : null,
+                        'start_time' => $newStart,
+                        'end_time'   => $newEnd,
+                        'status'     => 'active',
+                    ]);
+                    $payment->update(['member_subscription_id' => $sub->id]);
+                }
+
+                // Optional: mark any older overlapping active subscriptions as expired
+                // (keeps only one active pass)
+                MemberSubscription::where('member_id', $member->id)
+                    ->where('id', '!=', $payment->member_subscription_id)
+                    ->where('status', 'active')
+                    ->where('end_time', '<=', $newEnd)
+                    ->update(['status' => 'expired']);
             }
 
             // 4. System Audit Trail
@@ -120,7 +169,7 @@ class PaymentApprovalController extends Controller
             }
         });
 
-        return back()->with('success', "Payment {$payment->payment_code} verified and subscription updated.");
+        return back()->with('success', "Payment {$payment->payment_code} verified and subscription extended successfully.");
     }
 
     /**
@@ -134,6 +183,7 @@ class PaymentApprovalController extends Controller
 
     /**
      * Record a Manual Payment with Fixed Package Pricing
+     * Also fixed for advance payments
      */
     public function storeManual(Request $request)
     {
@@ -150,7 +200,7 @@ class PaymentApprovalController extends Controller
             $paymentCode = 'PAY-' . Carbon::now()->format('YmdHis');
 
             $isDaily = ($package->plan_type === 'daily' || $package->duration_in_days <= 1);
-            $amount = $package->price; // Fixed package rate
+            $amount = $package->price;
 
             // 1. Record Verified Payment
             $payment = Payment::create([
@@ -180,7 +230,7 @@ class PaymentApprovalController extends Controller
                 'revenue_date' => Carbon::today()->toDateString()
             ]);
 
-            // 3. Allocate Points based on Plan
+            // 3. Allocate Points
             $pointsAwarded = 15;
             if ($package->duration_in_days >= 365) $pointsAwarded = 180;
             elseif ($package->duration_in_days >= 90) $pointsAwarded = 45;
@@ -189,9 +239,28 @@ class PaymentApprovalController extends Controller
             $member->increment('reward_points', $pointsAwarded);
             $member->update(['membership_status' => 'active']);
 
-            // 4. Create Active Subscription (Daily ends today at 23:59:59)
-            $startTime = Carbon::now();
-            $endTime = $isDaily ? Carbon::today()->endOfDay() : Carbon::now()->addDays($package->duration_in_days);
+            // =====================================================
+            // 4. FIXED: Proper extension for advance payments
+            // =====================================================
+            $currentActiveSub = MemberSubscription::where('member_id', $member->id)
+                ->where('status', 'active')
+                ->where('end_time', '>', Carbon::now())
+                ->orderByDesc('end_time')
+                ->first();
+
+            if ($isDaily) {
+                $startTime = Carbon::now();
+                $endTime   = Carbon::today()->endOfDay();
+            } else {
+                if ($currentActiveSub) {
+                    // Stack on top of remaining days
+                    $startTime = Carbon::parse($currentActiveSub->end_time);
+                    $endTime   = (clone $startTime)->addDays($package->duration_in_days);
+                } else {
+                    $startTime = Carbon::now();
+                    $endTime   = Carbon::now()->addDays($package->duration_in_days);
+                }
+            }
 
             $sub = MemberSubscription::create([
                 'member_id'  => $member->id,
@@ -202,6 +271,12 @@ class PaymentApprovalController extends Controller
             ]);
 
             $payment->update(['member_subscription_id' => $sub->id]);
+
+            // Mark older active subs as expired
+            MemberSubscription::where('member_id', $member->id)
+                ->where('id', '!=', $sub->id)
+                ->where('status', 'active')
+                ->update(['status' => 'expired']);
 
             // 5. Audit Log
             if (class_exists(AuditLog::class)) {
@@ -221,6 +296,6 @@ class PaymentApprovalController extends Controller
             }
         });
 
-        return back()->with('success', 'Manual payment logged with fixed rate, points credited, and subscription activated.');
+        return back()->with('success', 'Manual payment logged, points credited, and subscription extended successfully.');
     }
 }
