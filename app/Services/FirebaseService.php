@@ -11,23 +11,38 @@ class FirebaseService
     protected string $projectId;
     protected string $baseUrl;
     protected ?array $credentials = null;
+public function __construct()
+{
+    // 1. Try environment variable first (most reliable on Render)
+    $json = env('FIREBASE_CREDENTIALS');
 
-    public function __construct()
-    {
-        $credPath = file_exists('/etc/secrets/firebase_credentials.json')
-            ? '/etc/secrets/firebase_credentials.json'
-            : storage_path('app/firebase/firebase_credentials.json');
+    if ($json) {
+        $this->credentials = json_decode($json, true);
+    } else {
+        // 2. Fallback to secret file
+        $possiblePaths = [
+            '/etc/secrets/firebase_credentials.json',
+            storage_path('app/firebase/firebase_credentials.json'),
+            base_path('firebase_credentials.json'),
+        ];
 
-        if (file_exists($credPath)) {
-            $this->credentials = json_decode(file_get_contents($credPath), true);
-            $this->projectId = $this->credentials['project_id'] ?? env('FIREBASE_PROJECT_ID', 'eco-heights-gym-c200d');
-        } else {
-            $this->projectId = env('FIREBASE_PROJECT_ID', 'eco-heights-gym-c200d');
-            Log::warning('Firebase credentials file not found at: ' . $credPath);
+        foreach ($possiblePaths as $path) {
+            if (file_exists($path) && is_readable($path)) {
+                $this->credentials = json_decode(file_get_contents($path), true);
+                break;
+            }
         }
-
-        $this->baseUrl = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents";
     }
+
+    if ($this->credentials) {
+        $this->projectId = $this->credentials['project_id'] ?? env('FIREBASE_PROJECT_ID', 'eco-heights-gym-c200d');
+    } else {
+        $this->projectId = env('FIREBASE_PROJECT_ID', 'eco-heights-gym-c200d');
+        \Log::warning('Firebase credentials not found (neither env nor file)');
+    }
+
+    $this->baseUrl = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents";
+}
 
     protected function getAccessToken(): ?string
     {
