@@ -60,7 +60,10 @@ class DashboardController extends Controller
         }
 
         // 3. Member & Pending Counts
-        $activeMembersCount   = Member::where('membership_status', 'active')->count();
+            $activeMembersCount = Member::whereHas('subscriptions', function ($q) {
+                $q->where('status', 'active')
+                ->where('end_time', '>', now());
+            })->count();        
         $pendingPaymentsCount = Payment::where('status', 'pending')->count();
         $pendingMembersCount  = Member::where('verification_status', 'pending')->count();
         $pendingCount         = $pendingPaymentsCount + $pendingMembersCount;

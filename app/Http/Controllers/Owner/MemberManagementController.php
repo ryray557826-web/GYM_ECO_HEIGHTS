@@ -28,7 +28,7 @@ class MemberManagementController extends Controller
      */
     public function index()
 {
-    // 1. Auto-expire subscriptions
+    // 1. Auto-expire any subscriptions whose end_time has passed
     $overdueSubs = MemberSubscription::where('status', 'active')
         ->where('end_time', '<', Carbon::now())
         ->get();
@@ -40,31 +40,43 @@ class MemberManagementController extends Controller
         }
     }
 
-    // 2. Clean up pending verified members
+    // 2. Sync membership_status for ALL members based on real live subscriptions
+    //    - Has live pass  → active
+    //    - No live pass   → expired (unless suspended)
+    $membersToSync = Member::with(['subscriptions' => function ($q) {
+        $q->where('status', 'active')->where('end_time', '>', Carbon::now());
+    }])->get();
+
+    foreach ($membersToSync as $m) {
+        if ($m->membership_status === 'suspended') {
+            continue; // never auto-change suspended
+        }
+
+        $hasLivePass = $m->subscriptions->isNotEmpty();
+
+        if ($hasLivePass && $m->membership_status !== 'active') {
+            $m->update(['membership_status' => 'active']);
+        } elseif (!$hasLivePass && $m->membership_status === 'active') {
+            $m->update(['membership_status' => 'expired']);
+        }
+    }
+
+    // 3. Clean up: ensure verified members are not stuck on 'pending'
     Member::where('verification_status', 'verified')
         ->where('membership_status', 'pending')
         ->update(['membership_status' => 'expired']);
 
-    // 3. FORCE restore from Firestore
+    // 4. Restore from Firestore (only if cloud has data)
     try {
-        $fb = new \App\Services\FirebaseService();
+        $fb = new FirebaseService();
         $cloudMembers = $fb->getAllCloudMembers();
 
         if (count($cloudMembers) > 0) {
             \Illuminate\Support\Facades\Artisan::call('firebase:sync');
         }
     } catch (\Exception $e) {
-        \Log::error('Firebase auto-sync failed: ' . $e->getMessage());
-    }
-
-    // 4. ONE-TIME: Populate realistic data if almost no subscriptions exist
-    try {
-        $subCount = \App\Models\MemberSubscription::count();
-        if ($subCount < 5) {
-            \Illuminate\Support\Facades\Artisan::call('members:populate', ['--force' => true]);
-        }
-    } catch (\Exception $e) {
-        \Log::error('Populate members failed: ' . $e->getMessage());
+        Log::error('Firebase auto-sync failed: ' . $e->getMessage());
+        session()->flash('error', 'Firebase Error: ' . $e->getMessage());
     }
 
     $members = Member::with(['customer', 'latestSubscription.package'])->get();
