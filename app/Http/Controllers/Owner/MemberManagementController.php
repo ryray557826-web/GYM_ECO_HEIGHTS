@@ -25,39 +25,49 @@ class MemberManagementController extends Controller
     /**
      * Display the Members table and handle automatic subscription expirations
      */
-    public function index()
-    {
-        // 1. Auto-expire any subscriptions whose end_time has passed
-        $overdueSubs = MemberSubscription::where('status', 'active')
-            ->where('end_time', '<', Carbon::now())
-            ->get();
+    /**
+ * Display the Members table and handle automatic subscription expirations
+ */
+public function index()
+{
+    // 1. Auto-expire any subscriptions whose end_time has passed
+    $overdueSubs = MemberSubscription::where('status', 'active')
+        ->where('end_time', '<', Carbon::now())
+        ->get();
 
-        foreach ($overdueSubs as $sub) {
-            $sub->update(['status' => 'expired']);
-            if ($sub->member && $sub->member->membership_status !== 'suspended') {
-                $sub->member->update(['membership_status' => 'expired']);
-            }
+    foreach ($overdueSubs as $sub) {
+        $sub->update(['status' => 'expired']);
+        if ($sub->member && $sub->member->membership_status !== 'suspended') {
+            $sub->member->update(['membership_status' => 'expired']);
         }
-
-        // 2. Clean up: ensure verified members are not stuck on 'pending'
-        Member::where('verification_status', 'verified')
-            ->where('membership_status', 'pending')
-            ->update(['membership_status' => 'expired']);
-
-        // 3. Cloud Guard: If cloud members exist that aren't in SQLite, quickly sync them!
-        try {
-            $fb = new \App\Services\FirebaseService();
-            $cloudMembers = $fb->getAllCloudMembers();
-            if (count($cloudMembers) > Member::count()) {
-                \Illuminate\Support\Facades\Artisan::call('firebase:sync');
-            }
-        } catch (\Exception $e) {}
-
-        $members = Member::with(['customer', 'latestSubscription.package'])->get();
-        $packages = Package::where('is_active', true)->get();
-
-        return view('owner.members', compact('members', 'packages'));
     }
+
+    // 2. Clean up: ensure verified members are not stuck on 'pending'
+    Member::where('verification_status', 'verified')
+        ->where('membership_status', 'pending')
+        ->update(['membership_status' => 'expired']);
+
+    // 3. Cloud Guard: Always try to restore members from Firestore when local DB is empty or behind
+    try {
+        $fb = new \App\Services\FirebaseService();
+        $cloudMembers = $fb->getAllCloudMembers();
+        $localCount = Member::count();
+
+        if (count($cloudMembers) > $localCount) {
+            // Force full sync so members appear immediately
+            \Illuminate\Support\Facades\Artisan::call('firebase:sync');
+        }
+    } catch (\Exception $e) {
+        // Log the real error so you can debug later
+        \Log::error('Firebase member auto-sync failed: ' . $e->getMessage());
+    }
+
+    // Re-query after possible sync
+    $members = Member::with(['customer', 'latestSubscription.package'])->get();
+    $packages = Package::where('is_active', true)->get();
+
+    return view('owner.members', compact('members', 'packages'));
+}
 
     /**
      * Owner registers an APPROVED member with instant pass activation, revenue, and points

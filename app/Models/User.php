@@ -17,6 +17,7 @@ class User extends Authenticatable
         'password',
         'role',
         'status',
+        'account_status',          // ← added
         'email_verified_at',
         'date_of_birth',
         'age',
@@ -31,6 +32,7 @@ class User extends Authenticatable
     {
         return $this->role === 'owner';
     }
+
     public function customer()
     {
         return $this->hasOne(Customer::class, 'user_id');
