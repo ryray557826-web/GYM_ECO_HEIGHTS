@@ -19,53 +19,50 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
 
 class MemberManagementController extends Controller
 {
     /**
      * Display the Members table and handle automatic subscription expirations
      */
-    /**
- * Display the Members table and handle automatic subscription expirations
- */
-public function index()
-{
-    // 1. Auto-expire any subscriptions whose end_time has passed
-    $overdueSubs = MemberSubscription::where('status', 'active')
-        ->where('end_time', '<', Carbon::now())
-        ->get();
+    public function index()
+    {
+        // 1. Auto-expire any subscriptions whose end_time has passed
+        $overdueSubs = MemberSubscription::where('status', 'active')
+            ->where('end_time', '<', Carbon::now())
+            ->get();
 
-    foreach ($overdueSubs as $sub) {
-        $sub->update(['status' => 'expired']);
-        if ($sub->member && $sub->member->membership_status !== 'suspended') {
-            $sub->member->update(['membership_status' => 'expired']);
+        foreach ($overdueSubs as $sub) {
+            $sub->update(['status' => 'expired']);
+            if ($sub->member && $sub->member->membership_status !== 'suspended') {
+                $sub->member->update(['membership_status' => 'expired']);
+            }
         }
-    }
 
-    // 2. Clean up: ensure verified members are not stuck on 'pending'
-    Member::where('verification_status', 'verified')
-        ->where('membership_status', 'pending')
-        ->update(['membership_status' => 'expired']);
+        // 2. Clean up: ensure verified members are not stuck on 'pending'
+        Member::where('verification_status', 'verified')
+            ->where('membership_status', 'pending')
+            ->update(['membership_status' => 'expired']);
 
-    // 3. FORCE restore from Firestore every time (because deploy wipes SQLite)
-    try {
-        $fb = new \App\Services\FirebaseService();
-        $cloudMembers = $fb->getAllCloudMembers();
+        // 3. FORCE restore from Firestore every time (deploy always wipes SQLite)
+        try {
+            $fb = new FirebaseService();
+            $cloudMembers = $fb->getAllCloudMembers();
 
-        if (count($cloudMembers) > 0) {
-            \Illuminate\Support\Facades\Artisan::call('firebase:sync');
+            if (count($cloudMembers) > 0) {
+                \Illuminate\Support\Facades\Artisan::call('firebase:sync');
+            }
+        } catch (\Exception $e) {
+            Log::error('Firebase auto-sync failed: ' . $e->getMessage());
+            session()->flash('error', 'Firebase Error: ' . $e->getMessage());
         }
-    } catch (\Exception $e) {
-        \Log::error('Firebase auto-sync failed: ' . $e->getMessage());
-        // Temporary: show the error so we can see it
-        session()->flash('error', 'Firebase Error: ' . $e->getMessage());
+
+        $members = Member::with(['customer', 'latestSubscription.package'])->get();
+        $packages = Package::where('is_active', true)->get();
+
+        return view('owner.members', compact('members', 'packages'));
     }
-
-    $members = Member::with(['customer', 'latestSubscription.package'])->get();
-    $packages = Package::where('is_active', true)->get();
-
-    return view('owner.members', compact('members', 'packages'));
-}
 
     /**
      * Owner registers an APPROVED member with instant pass activation, revenue, and points
@@ -91,7 +88,7 @@ public function index()
                 'email'             => strtolower($request->email),
                 'password'          => Hash::make($rawPassword),
                 'role'              => 'member',
-                'account_status'    => 'active', // Direct addition is active
+                'account_status'    => 'active',
                 'email_verified_at' => Carbon::now(),
             ]);
 
@@ -133,7 +130,7 @@ public function index()
                 'customer_id'         => $customer->id,
                 'member_code'         => $memberCode,
                 'joined_date'         => Carbon::today(),
-                'verification_status' => 'verified', // Pre-approved by Owner
+                'verification_status' => 'verified',
                 'membership_status'   => $hasActivePackage ? 'active' : 'expired',
                 'reward_points'       => $initialPoints,
             ]);
@@ -147,7 +144,6 @@ public function index()
             if ($hasActivePackage && $package) {
                 $isDaily = ($package->plan_type === 'daily' || $package->duration_in_days <= 1);
                 
-                // Daily passes expire at the end of the day (23:59:59)
                 $startTime = Carbon::now();
                 $endTime = $isDaily ? Carbon::today()->endOfDay() : Carbon::now()->addDays($package->duration_in_days);
 
@@ -159,7 +155,6 @@ public function index()
                     'status'     => 'active'
                 ]);
 
-                // Record Payment
                 $cashMethod = PaymentMethod::firstOrCreate(['code' => 'cash'], ['name' => 'Physical / Walk-In']);
                 $paymentCode = 'PAY-' . Carbon::now()->format('YmdHis');
 
@@ -176,7 +171,6 @@ public function index()
                     'verified_by'            => auth()->id()
                 ]);
 
-                // Record in Revenue Ledger
                 $budOps = Budget::firstOrCreate(
                     ['budget_code' => 'BUD-2026-OPS'],
                     ['category_name' => 'Facility Operations', 'allocated_amount' => 35000.00, 'spent_amount' => 0.00]
@@ -241,7 +235,6 @@ public function index()
                 $member->customer->user->update(['account_status' => 'active']);
             }
 
-            // Sync verified status to Firebase
             try {
                 $firebase = new FirebaseService();
                 $firebase->syncMember([
@@ -296,7 +289,6 @@ public function index()
                 ]);
             }
 
-            // Check if member holds an active long-term pass (>= 28 days)
             $sub = $member->latestSubscription;
             $package = $sub ? $sub->package : null;
             $canModifyPass = $sub && 
@@ -308,7 +300,6 @@ public function index()
                 'verification_status' => $request->verification_status,
             ];
 
-            // Only modify membership_status if allowed (monthly+ plan) OR if setting to suspended
             if ($request->filled('membership_status')) {
                 if ($request->membership_status === 'suspended' || $canModifyPass) {
                     $updateData['membership_status'] = $request->membership_status;
@@ -324,7 +315,6 @@ public function index()
                 ]);
             }
 
-            // Only update end_date if member has an active monthly or longer subscription
             if ($canModifyPass && $request->filled('end_date') && $sub) {
                 $sub->update([
                     'end_time' => Carbon::parse($request->end_date)->endOfDay(),
