@@ -27,7 +27,7 @@ class MemberManagementController extends Controller
      */
     public function index()
     {
-        // 1. Automatically expire any subscriptions past their end time (midnight for daily, 30+ days for monthly)
+        // 1. Auto-expire any subscriptions whose end_time has passed
         $overdueSubs = MemberSubscription::where('status', 'active')
             ->where('end_time', '<', Carbon::now())
             ->get();
@@ -39,10 +39,19 @@ class MemberManagementController extends Controller
             }
         }
 
-        // 2. Clean-up: If a member is VERIFIED, ensure their pass status is NOT stuck on 'pending'
+        // 2. Clean up: ensure verified members are not stuck on 'pending'
         Member::where('verification_status', 'verified')
             ->where('membership_status', 'pending')
             ->update(['membership_status' => 'expired']);
+
+        // 3. Cloud Guard: If cloud members exist that aren't in SQLite, quickly sync them!
+        try {
+            $fb = new \App\Services\FirebaseService();
+            $cloudMembers = $fb->getAllCloudMembers();
+            if (count($cloudMembers) > Member::count()) {
+                \Illuminate\Support\Facades\Artisan::call('firebase:sync');
+            }
+        } catch (\Exception $e) {}
 
         $members = Member::with(['customer', 'latestSubscription.package'])->get();
         $packages = Package::where('is_active', true)->get();

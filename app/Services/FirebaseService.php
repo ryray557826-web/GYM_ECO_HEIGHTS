@@ -13,7 +13,9 @@ class FirebaseService
 
     public function __construct()
     {
-        $credPath = storage_path('app/firebase/firebase_credentials.json');
+        $credPath = file_exists('/etc/secrets/firebase_credentials.json')
+            ? '/etc/secrets/firebase_credentials.json'
+            : storage_path('app/firebase/firebase_credentials.json');
 
         if (file_exists($credPath)) {
             $this->credentials = json_decode(file_get_contents($credPath), true);
@@ -25,9 +27,6 @@ class FirebaseService
         $this->baseUrl = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents";
     }
 
-    /**
-     * Generate an OAuth2 Bearer Token using your service account private key
-     */
     protected function getAccessToken(): ?string
     {
         if (!$this->credentials) {
@@ -65,9 +64,6 @@ class FirebaseService
         return $token ? Http::withToken($token) : Http::baseUrl('');
     }
 
-    /**
-     * Convert standard PHP array to Firestore Typed Fields
-     */
     public function formatFields(array $data): array
     {
         $fields = [];
@@ -87,9 +83,6 @@ class FirebaseService
         return ['fields' => $fields];
     }
 
-    /**
-     * Set a Document in a Collection with a custom ID
-     */
     public function setDocument(string $collection, string $docId, array $data)
     {
         $url = "{$this->baseUrl}/{$collection}/{$docId}";
@@ -97,9 +90,6 @@ class FirebaseService
         return $this->client()->patch($url, $payload)->json();
     }
 
-    /**
-     * Add a Document in a Collection with an auto-generated ID
-     */
     public function addDocument(string $collection, array $data)
     {
         $url = "{$this->baseUrl}/{$collection}";
@@ -118,5 +108,56 @@ class FirebaseService
             'reward_points'     => (int) ($memberData['reward_points'] ?? 0),
             'updated_at'        => now()->toDateTimeString(),
         ]);
+    }
+
+    // Sync Revenue into Firebase Firestore
+    public function syncRevenue(array $data)
+    {
+        return $this->setDocument('revenues', $data['revenue_code'], [
+            'revenue_code' => (string) $data['revenue_code'],
+            'amount'       => (float) $data['amount'],
+            'revenue_date' => (string) $data['revenue_date'],
+            'notes'        => (string) ($data['notes'] ?? 'Verified Payment'),
+            'created_at'   => now()->toDateTimeString(),
+        ]);
+    }
+
+    // Sync Expense into Firebase Firestore
+    public function syncExpense(array $data)
+    {
+        return $this->setDocument('expenses', $data['expense_code'], [
+            'expense_code' => (string) $data['expense_code'],
+            'category'     => (string) $data['category'],
+            'description'  => (string) $data['description'],
+            'amount'       => (float) $data['amount'],
+            'expense_date' => (string) $data['expense_date'],
+            'created_at'   => now()->toDateTimeString(),
+        ]);
+    }
+
+    /**
+     * Fetch ALL members from Firestore with pageSize=300 (Fixes 20-doc cutoff)
+     */
+    public function getAllCloudMembers(): array
+    {
+        $url = "{$this->baseUrl}/members?pageSize=300";
+        $response = $this->client()->get($url);
+        $docs = $response->json('documents') ?? [];
+
+        $members = [];
+        foreach ($docs as $doc) {
+            $f = $doc['fields'] ?? [];
+            if (!empty($f['member_code']['stringValue'])) {
+                $members[] = [
+                    'member_code'    => $f['member_code']['stringValue'],
+                    'name'           => $f['name']['stringValue'] ?? 'Member',
+                    'email'          => $f['email']['stringValue'] ?? '',
+                    'contact_number' => $f['contact_number']['stringValue'] ?? '',
+                    'status'         => $f['membership_status']['stringValue'] ?? 'active',
+                    'reward_points'  => (int) ($f['reward_points']['integerValue'] ?? 0),
+                ];
+            }
+        }
+        return $members;
     }
 }
