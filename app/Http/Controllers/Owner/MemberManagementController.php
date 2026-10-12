@@ -47,22 +47,20 @@ public function index()
         ->where('membership_status', 'pending')
         ->update(['membership_status' => 'expired']);
 
-    // 3. Cloud Guard: Always try to restore members from Firestore when local DB is empty or behind
+    // 3. FORCE restore from Firestore every time (because deploy wipes SQLite)
     try {
         $fb = new \App\Services\FirebaseService();
         $cloudMembers = $fb->getAllCloudMembers();
-        $localCount = Member::count();
 
-        if (count($cloudMembers) > $localCount) {
-            // Force full sync so members appear immediately
+        if (count($cloudMembers) > 0) {
             \Illuminate\Support\Facades\Artisan::call('firebase:sync');
         }
     } catch (\Exception $e) {
-        // Log the real error so you can debug later
-        \Log::error('Firebase member auto-sync failed: ' . $e->getMessage());
+        \Log::error('Firebase auto-sync failed: ' . $e->getMessage());
+        // Temporary: show the error so we can see it
+        session()->flash('error', 'Firebase Error: ' . $e->getMessage());
     }
 
-    // Re-query after possible sync
     $members = Member::with(['customer', 'latestSubscription.package'])->get();
     $packages = Package::where('is_active', true)->get();
 
