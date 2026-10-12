@@ -10,65 +10,32 @@ use Carbon\Carbon;
 
 use App\Models\User;
 use App\Models\Employee;
-use App\Models\Customer;
-use App\Models\Member;
 use App\Models\Package;
 use App\Models\PackageFeature;
-use App\Models\MemberSubscription;
 use App\Models\PaymentMethod;
 use App\Models\Budget;
-use App\Models\Payment;
-use App\Models\Revenue;
-use App\Models\Expense;
 use App\Models\EquipmentCategory;
 use App\Models\Equipment;
-use App\Models\EquipmentMaintenance;
-use App\Models\Attendance;
-use App\Models\GymNote;
+use App\Models\EquipmentUnit;
 use App\Models\AuditLog;
 use App\Models\Announcement;
 use App\Services\FirebaseService;
-use App\Models\EquipmentUnit;
 
 class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        // 1. Clean Database
         Schema::disableForeignKeyConstraints();
 
-        Announcement::truncate();
-        AuditLog::truncate();
-        GymNote::truncate();
-        Attendance::truncate();
-        Expense::truncate();
-        Revenue::truncate();
-        Payment::truncate();
-        MemberSubscription::truncate();
-        PackageFeature::truncate();
-        Package::truncate();
-        PaymentMethod::truncate();
-        EquipmentMaintenance::truncate();
-        Equipment::truncate();
-        EquipmentCategory::truncate();
-        Budget::truncate();
-        Member::truncate();
-        Customer::truncate();
-        Employee::truncate();
-        User::truncate();
-
-        Schema::enableForeignKeyConstraints();
-
+        // 1. Firebase Service Instance
         $firebase = null;
         try {
             $firebase = new FirebaseService();
         } catch (\Exception $e) {
-            // Optional if running offline
+            // Fail gracefully if offline
         }
 
-        // =========================================================================
-        // 1. OWNER ACCOUNT (SINGLE CREDENTIAL)
-        // =========================================================================
+        // 2. Owner Account
         $ownerData = [
             'email' => 'owner@ecoheights.com',
             'password' => Hash::make('pass123'),
@@ -78,11 +45,10 @@ class DatabaseSeeder extends Seeder
         if (Schema::hasColumn('users', 'role')) $ownerData['role'] = 'owner';
         if (Schema::hasColumn('users', 'account_status')) $ownerData['account_status'] = 'active';
 
-        $ownerUser = User::create($ownerData);
+        $ownerUser = User::firstOrCreate(['email' => 'owner@ecoheights.com'], $ownerData);
 
-        Employee::create([
+        Employee::firstOrCreate(['employee_code' => 'EMP-001'], [
             'user_id'        => $ownerUser->id,
-            'employee_code'  => 'EMP-001',
             'first_name'     => 'Eco Heights',
             'last_name'      => 'Owner',
             'position'       => 'owner',
@@ -91,17 +57,13 @@ class DatabaseSeeder extends Seeder
             'status'         => 'active',
         ]);
 
-        // =========================================================================
-        // 2. PAYMENT METHODS INFRASTRUCTURE
-        // =========================================================================
-        PaymentMethod::create(['code' => 'cash', 'name' => 'Physical / Walk-In', 'is_online' => false, 'requires_reference' => false]);
-        PaymentMethod::create(['code' => 'gcash', 'name' => 'GCash', 'is_online' => true, 'requires_reference' => true]);
-        PaymentMethod::create(['code' => 'maya', 'name' => 'Maya', 'is_online' => true, 'requires_reference' => true]);
-        PaymentMethod::create(['code' => 'bank_transfer', 'name' => 'Bank Transfer', 'is_online' => true, 'requires_reference' => true]);
+        // 3. Payment Methods
+        PaymentMethod::firstOrCreate(['code' => 'cash'], ['name' => 'Physical / Walk-In', 'is_online' => false, 'requires_reference' => false]);
+        PaymentMethod::firstOrCreate(['code' => 'gcash'], ['name' => 'GCash', 'is_online' => true, 'requires_reference' => true]);
+        PaymentMethod::firstOrCreate(['code' => 'maya'], ['name' => 'Maya', 'is_online' => true, 'requires_reference' => true]);
+        PaymentMethod::firstOrCreate(['code' => 'bank_transfer'], ['name' => 'Bank Transfer', 'is_online' => true, 'requires_reference' => true]);
 
-        // =========================================================================
-        // 3. PACKAGES (Monthly, Quarterly, Yearly, Daily)
-        // =========================================================================
+        // 4. Packages (Monthly, Quarterly, Yearly, Daily)
         $packagesList = [
             [
                 'code' => 'PKG-MTH-750', 'name' => 'Monthly Standard Access', 'type' => 'monthly',
@@ -122,54 +84,49 @@ class DatabaseSeeder extends Seeder
         ];
 
         foreach ($packagesList as $pkg) {
-            $p = Package::create([
-                'package_code'     => $pkg['code'],
+            $p = Package::firstOrCreate(['package_code' => $pkg['code']], [
                 'name'             => $pkg['name'],
                 'plan_type'        => $pkg['type'],
                 'price'            => $pkg['price'],
                 'duration_in_days' => $pkg['days'],
                 'is_active'        => true,
             ]);
-            PackageFeature::create(['package_id' => $p->id, 'feature_description' => $pkg['feature']]);
+            PackageFeature::firstOrCreate(['package_id' => $p->id], ['feature_description' => $pkg['feature']]);
 
             if ($firebase) {
-                $firebase->setDocument('packages', $pkg['code'], [
-                    'package_code'     => $pkg['code'],
-                    'name'             => $pkg['name'],
-                    'price'            => (float) $pkg['price'],
-                    'duration_in_days' => (int) $pkg['days'],
-                    'plan_type'        => $pkg['type'],
-                ]);
+                try {
+                    $firebase->setDocument('packages', $pkg['code'], [
+                        'package_code'     => $pkg['code'],
+                        'name'             => $pkg['name'],
+                        'price'            => (float) $pkg['price'],
+                        'duration_in_days' => (int) $pkg['days'],
+                        'plan_type'        => $pkg['type'],
+                    ]);
+                } catch (\Exception $e) {}
             }
         }
 
-        // =========================================================================
-        // 4. FISCAL BUDGETS
-        // =========================================================================
-        Budget::create([
-            'budget_code'      => 'BUD-2026-EQP',
+        // 5. Budgets
+        Budget::firstOrCreate(['budget_code' => 'BUD-2026-EQP'], [
             'category_name'    => 'Equipment Upkeep & Purchases',
             'fiscal_year'      => 2026,
             'allocated_amount' => 50000.00,
             'spent_amount'     => 0.00,
         ]);
 
-        Budget::create([
-            'budget_code'      => 'BUD-2026-OPS',
+        Budget::firstOrCreate(['budget_code' => 'BUD-2026-OPS'], [
             'category_name'    => 'Facility Operations & Rent',
             'fiscal_year'      => 2026,
             'allocated_amount' => 35000.00,
             'spent_amount'     => 0.00,
         ]);
 
-        // =========================================================================
-        // 5. EQUIPMENT CATEGORIES & GYM ASSETS
-        // =========================================================================
-        $catWeights = EquipmentCategory::create(['category_code' => 'CAT-FW', 'name' => 'Free Weights', 'description' => 'Plates, Dumbbells, Barbells']);
-        $catRacks   = EquipmentCategory::create(['category_code' => 'CAT-RF', 'name' => 'Racks & Frames', 'description' => 'Power cages, Squat racks']);
-        $catCardio  = EquipmentCategory::create(['category_code' => 'CAT-CRD', 'name' => 'Cardio', 'description' => 'Treadmills, Rowers, Bikes']);
-        $catMachine = EquipmentCategory::create(['category_code' => 'CAT-MCH', 'name' => 'Machines', 'description' => 'Cable stations, Leg presses']);
-        $catBody    = EquipmentCategory::create(['category_code' => 'CAT-BW', 'name' => 'Bodyweight', 'description' => 'Pull-up bars, Dip stations']);
+        // 6. Equipment Categories & Units
+        $catWeights = EquipmentCategory::firstOrCreate(['category_code' => 'CAT-FW'], ['name' => 'Free Weights', 'description' => 'Plates, Dumbbells, Barbells']);
+        $catRacks   = EquipmentCategory::firstOrCreate(['category_code' => 'CAT-RF'], ['name' => 'Racks & Frames', 'description' => 'Power cages, Squat racks']);
+        $catCardio  = EquipmentCategory::firstOrCreate(['category_code' => 'CAT-CRD'], ['name' => 'Cardio', 'description' => 'Treadmills, Rowers, Bikes']);
+        $catMachine = EquipmentCategory::firstOrCreate(['category_code' => 'CAT-MCH'], ['name' => 'Machines', 'description' => 'Cable stations, Leg presses']);
+        $catBody    = EquipmentCategory::firstOrCreate(['category_code' => 'CAT-BW'], ['name' => 'Bodyweight', 'description' => 'Pull-up bars, Dip stations']);
 
         $equipmentsData = [
             ['code' => 'EQP-001', 'name' => 'Olympic Barbell (20kg)', 'category_id' => $catWeights->id, 'cat_name' => 'Free Weights', 'qty' => 4, 'loc' => 'Free Weights Area', 'status' => 'operational', 'p_date' => '2025-11-18', 'next' => '2026-11-10'],
@@ -184,8 +141,7 @@ class DatabaseSeeder extends Seeder
         ];
 
         foreach ($equipmentsData as $ed) {
-            $eq = Equipment::create([
-                'equipment_code'       => $ed['code'],
+            $eq = Equipment::firstOrCreate(['equipment_code' => $ed['code']], [
                 'category_id'          => $ed['category_id'],
                 'name'                 => $ed['name'],
                 'quantity'             => $ed['qty'],
@@ -195,53 +151,43 @@ class DatabaseSeeder extends Seeder
                 'next_maintenance_due' => Carbon::parse($ed['next']),
             ]);
 
-            // Create individual physical unit codes (e.g. EQP-001-U1, EQP-001-U2...)
             for ($u = 1; $u <= $ed['qty']; $u++) {
-                if (class_exists(EquipmentUnit::class)) {
-                    EquipmentUnit::create([
-                        'equipment_id'         => $eq->id,
-                        'unit_code'            => "{$ed['code']}-U{$u}",
-                        'unit_label'           => "{$ed['name']} #{$u}",
-                        'status'               => ($u === 2 && $ed['code'] === 'EQP-001') ? 'under_repair' : $ed['status'],
-                        'next_maintenance_due' => Carbon::parse($ed['next']),
-                    ]);
-                } else {
-                    DB::table('equipment_units')->insert([
-                        'equipment_id'         => $eq->id,
-                        'unit_code'            => "{$ed['code']}-U{$u}",
-                        'unit_label'           => "{$ed['name']} #{$u}",
-                        'status'               => ($u === 2 && $ed['code'] === 'EQP-001') ? 'under_repair' : $ed['status'],
-                        'next_maintenance_due' => Carbon::parse($ed['next']),
-                        'created_at'           => now(),
-                        'updated_at'           => now(),
-                    ]);
-                }
+                EquipmentUnit::firstOrCreate(['unit_code' => "{$ed['code']}-U{$u}"], [
+                    'equipment_id'         => $eq->id,
+                    'unit_label'           => "{$ed['name']} #{$u}",
+                    'status'               => $ed['status'],
+                    'next_maintenance_due' => Carbon::parse($ed['next']),
+                ]);
             }
         }
 
-        // =========================================================================
-        // 6. OFFICIAL WELCOME ANNOUNCEMENT
-        // =========================================================================
-        $announcement = Announcement::create([
-            'title'             => 'Welcome to Eco Heights Fitness Gym',
-            'badge'             => 'INFO',
-            'message'           => 'Operating hours: 6:00 AM – 11:00 PM daily. Please re-rack your weights after use.',
-            'posted_date'       => Carbon::today(),
-            'posted_by_user_id' => $ownerUser->id,
-        ]);
+        // 7. Announcements
+        $announcementsList = [
+            [
+                'title'   => 'Extended Gym Hours Starting October',
+                'badge'   => 'SCHEDULE',
+                'message' => 'We are extending operating hours from 6:00 AM to 11:00 PM on weekdays.',
+                'date'    => Carbon::today(),
+            ],
+            [
+                'title'   => 'Welcome to Eco Heights Fitness Gym',
+                'badge'   => 'INFO',
+                'message' => 'Operating hours: 6:00 AM – 11:00 PM daily. Please re-rack your weights after use.',
+                'date'    => Carbon::today(),
+            ],
+        ];
 
-        if ($firebase) {
-            $firebase->addDocument('announcements', [
-                'title'       => $announcement->title,
-                'badge'       => $announcement->badge,
-                'message'     => $announcement->message,
-                'posted_date' => $announcement->posted_date->toDateString(),
+        foreach ($announcementsList as $anc) {
+            Announcement::firstOrCreate(['title' => $anc['title']], [
+                'badge'             => $anc['badge'],
+                'message'           => $anc['message'],
+                'posted_date'       => $anc['date'],
+                'posted_by_user_id' => $ownerUser->id,
             ]);
         }
 
-        // Initial Audit Entry
-        AuditLog::create([
-            'log_code'        => 'AUD-001',
+        // 8. Initial Audit Log
+        AuditLog::firstOrCreate(['log_code' => 'AUD-001'], [
             'user_id'         => $ownerUser->id,
             'action'          => 'System Initialized in Production Mode',
             'entity_type'     => User::class,
@@ -250,7 +196,7 @@ class DatabaseSeeder extends Seeder
             'performed_by'    => 'System',
             'created_at'      => Carbon::now(),
         ]);
-    
-        // Run logbook import automatically during deployment
-        \Illuminate\Support\Facades\Artisan::call('gym:import-logbook');    }
+
+        Schema::enableForeignKeyConstraints();
+    }
 }
