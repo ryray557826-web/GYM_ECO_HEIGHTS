@@ -83,9 +83,9 @@
                             </button>
                         </form>
 
-                        <!-- Normal Delete -->
+                        {{-- Normal Delete --}}
                         <form action="{{ route('owner.promos.destroy', $pkg->id) }}" method="POST" class="inline"
-                              onsubmit="return confirm('Are you sure you want to delete this package?')">
+                              onsubmit="return confirmDelete('{{ $pkg->name }}', {{ $pkg->subscriptions_count }}, false)">
                             @csrf
                             @method('DELETE')
                             <button type="submit" class="text-xs text-rose-400 hover:text-rose-300">
@@ -93,9 +93,9 @@
                             </button>
                         </form>
 
-                        <!-- Force Delete (only shown when needed, or always available) -->
+                        {{-- Force Delete --}}
                         <form action="{{ route('owner.promos.destroy', $pkg->id) }}" method="POST" class="inline"
-                              onsubmit="return confirm('⚠️ FORCE DELETE\n\nThis package is used by members.\nThis will also delete all related subscriptions.\n\nAre you absolutely sure?')">
+                              onsubmit="return confirmDelete('{{ $pkg->name }}', {{ $pkg->subscriptions_count }}, true)">
                             @csrf
                             @method('DELETE')
                             <input type="hidden" name="force" value="1">
@@ -249,6 +249,33 @@ function openEditPromoModal(pkg) {
 
     document.getElementById('editPromoForm').action = `/owner/promos/${pkg.id}/update`;
     document.getElementById('editPromoModal').showModal();
+}
+
+function confirmDelete(packageName, count, isForce) {
+    if (isForce) {
+        if (count > 0) {
+            return confirm(
+                `⚠️ FORCE DELETE\n\n` +
+                `Package: "${packageName}"\n` +
+                `Currently used by: ${count} member(s)\n\n` +
+                `This will permanently delete the package AND all related subscriptions.\n\n` +
+                `Are you absolutely sure?`
+            );
+        }
+        return confirm(`Force delete "${packageName}"?`);
+    }
+
+    // Normal delete
+    if (count > 0) {
+        alert(
+            `Cannot delete "${packageName}".\n\n` +
+            `It is currently used by ${count} member subscription(s).\n\n` +
+            `Please use the Force Delete button if you really want to remove it.`
+        );
+        return false;
+    }
+
+    return confirm(`Are you sure you want to delete "${packageName}"?`);
 }
 </script>
 @endpush

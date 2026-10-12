@@ -16,34 +16,22 @@ use Carbon\Carbon;
 class PopulateMemberData extends Command
 {
     protected $signature = 'members:populate {--force}';
-    protected $description = 'One-time: Give ALL members realistic passes, payments, revenue and attendance';
+    protected $description = 'One-time: Give ALL members realistic passes using the seeded packages, plus revenue and attendance';
 
     public function handle()
-    {   if (MemberSubscription::count() > 10 && !$this->option('force')) {
-        $this->info('Subscriptions already exist – skipping population.');
-        return 0;
-    } 
-        $this->info('Starting FORCE member data population...');
+    {
+        $this->info('Starting FORCE member data population using seeded packages...');
 
-        $daily = Package::firstOrCreate(
-            ['package_code' => 'PKG-DAILY'],
-            ['name' => 'Daily Walk-in', 'plan_type' => 'daily', 'price' => 50.00, 'duration_in_days' => 1, 'is_active' => true]
-        );
+        // Use ONLY the packages from DatabaseSeeder
+        $daily     = Package::where('package_code', 'PKG-DAY-050')->first();
+        $monthly   = Package::where('package_code', 'PKG-MTH-750')->first();
+        $quarterly = Package::where('package_code', 'PKG-QTR-2100')->first();
+        $yearly    = Package::where('package_code', 'PKG-YRL-7500')->first();
 
-        $monthly = Package::firstOrCreate(
-            ['package_code' => 'PKG-MONTHLY'],
-            ['name' => 'Monthly Pass', 'plan_type' => 'monthly', 'price' => 800.00, 'duration_in_days' => 30, 'is_active' => true]
-        );
-
-        $quarterly = Package::firstOrCreate(
-            ['package_code' => 'PKG-QUARTERLY'],
-            ['name' => 'Quarterly Pass', 'plan_type' => 'quarterly', 'price' => 2100.00, 'duration_in_days' => 90, 'is_active' => true]
-        );
-
-        $annual = Package::firstOrCreate(
-            ['package_code' => 'PKG-ANNUAL'],
-            ['name' => 'Annual Pass', 'plan_type' => 'annual', 'price' => 7500.00, 'duration_in_days' => 365, 'is_active' => true]
-        );
+        if (!$daily || !$monthly || !$quarterly || !$yearly) {
+            $this->error('Seeded packages not found! Please run php artisan db:seed first.');
+            return 1;
+        }
 
         $cashMethod = PaymentMethod::firstOrCreate(['code' => 'cash'], ['name' => 'Physical / Walk-In']);
 
@@ -60,19 +48,20 @@ class PopulateMemberData extends Command
         $createdAttendances = 0;
 
         foreach ($members as $member) {
-            // Force clean old data
+            // Force clean old incomplete data
             $member->subscriptions()->delete();
 
             $points = (int) ($member->reward_points ?? 0);
 
+            // Map reward points to the correct seeded package
             if ($points >= 180) {
-                $package = $annual;
+                $package = $yearly;          // Yearly VIP
             } elseif ($points >= 45) {
-                $package = $quarterly;
+                $package = $quarterly;       // Quarterly
             } elseif ($points >= 15) {
-                $package = $monthly;
+                $package = $monthly;         // Monthly
             } else {
-                $package = $daily;
+                $package = $daily;           // Daily
             }
 
             $isDaily = $package->plan_type === 'daily' || $package->duration_in_days <= 1;
@@ -100,7 +89,7 @@ class PopulateMemberData extends Command
             ]);
 
             $payment = Payment::create([
-                'payment_code'           => 'PAY-' . $member->member_code . '-' . time() . rand(10,99),
+                'payment_code'           => 'PAY-' . $member->member_code . '-' . time() . rand(10, 99),
                 'customer_id'            => $member->customer_id,
                 'member_id'              => $member->id,
                 'member_subscription_id' => $sub->id,
@@ -125,7 +114,7 @@ class PopulateMemberData extends Command
                 'updated_at'   => $startTime,
             ]);
 
-            // Correct entry_type values only
+            // Correct entry_type values
             $entryType = $isDaily ? 'per_session' : 'membership';
 
             $attCount = rand(2, 5);

@@ -13,7 +13,11 @@ class PromoController extends Controller
 {
     public function index()
     {
-        $packages = Package::with('features')->orderBy('is_active', 'desc')->get();
+        $packages = Package::with('features')
+            ->withCount('subscriptions')
+            ->orderBy('is_active', 'desc')
+            ->get();
+
         return view('owner.promos.index', compact('packages'));
     }
 
@@ -96,31 +100,25 @@ class PromoController extends Controller
         return back()->with('success', "Package {$package->name} is now {$status}.");
     }
 
-    /**
-     * Safe delete with confirmation for packages that are in use
-     */
     public function destroy(Request $request, Package $package)
     {
         $subscriptionCount = $package->subscriptions()->count();
 
         // If people are using this package and force is NOT confirmed
         if ($subscriptionCount > 0 && !$request->boolean('force')) {
-            return back()->with('error', 
+            return back()->with('error',
                 "Cannot delete \"{$package->name}\". It is currently used by {$subscriptionCount} member subscription(s). " .
-                "If you really want to delete it, click the Force Delete button."
+                "Please use the Force Delete button if you really want to remove it."
             );
         }
 
         // Force delete confirmed or no one is using it
         DB::transaction(function () use ($package, $subscriptionCount) {
             if ($subscriptionCount > 0) {
-                // Delete related subscriptions first
                 $package->subscriptions()->delete();
             }
 
-            // Also delete features if any
             $package->features()->delete();
-
             $package->delete();
         });
 
