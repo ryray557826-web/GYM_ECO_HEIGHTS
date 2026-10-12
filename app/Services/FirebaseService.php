@@ -26,37 +26,48 @@ class FirebaseService
 
         $this->baseUrl = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents";
     }
+protected function getAccessToken(): ?string
+{
+    if (!$this->credentials) {
+        return null;
+    }
 
-    protected function getAccessToken(): ?string
-    {
-        if (!$this->credentials) {
+    return Cache::remember('firebase_access_token', 3300, function () {
+        $now = time();
+
+        // Proper base64url encoding
+        $base64Url = function ($data) {
+            return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+        };
+
+        $header = $base64Url(json_encode(['alg' => 'RS256', 'typ' => 'JWT']));
+        
+        $payload = $base64Url(json_encode([
+            'iss'   => $this->credentials['client_email'],
+            'scope' => 'https://www.googleapis.com/auth/datastore',
+            'aud'   => 'https://oauth2.googleapis.com/token',
+            'exp'   => $now + 3600,
+            'iat'   => $now,
+        ]));
+
+        $rawSignature = '';
+        openssl_sign("{$header}.{$payload}", $rawSignature, $this->credentials['private_key'], OPENSSL_ALGO_SHA256);
+        
+        $jwt = "{$header}.{$payload}." . $base64Url($rawSignature);
+
+        $response = Http::asForm()->post('https://oauth2.googleapis.com/token', [
+            'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            'assertion'  => $jwt,
+        ]);
+
+        if (!$response->successful()) {
+            \Log::error('Firebase token error: ' . $response->body());
             return null;
         }
 
-        return Cache::remember('firebase_access_token', 3300, function () {
-            $now = time();
-            $header = base64_encode(json_encode(['alg' => 'RS256', 'typ' => 'JWT']));
-            
-            $payload = base64_encode(json_encode([
-                'iss'   => $this->credentials['client_email'],
-                'scope' => 'https://www.googleapis.com/auth/datastore',
-                'aud'   => 'https://oauth2.googleapis.com/token',
-                'exp'   => $now + 3600,
-                'iat'   => $now,
-            ]));
-
-            $rawSignature = '';
-            openssl_sign("{$header}.{$payload}", $rawSignature, $this->credentials['private_key'], OPENSSL_ALGO_SHA256);
-            $jwt = "{$header}.{$payload}." . str_replace(['+', '/', '='], ['-', '_', ''], base64_encode($rawSignature));
-
-            $response = Http::asForm()->post('https://oauth2.googleapis.com/token', [
-                'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-                'assertion'  => $jwt,
-            ]);
-
-            return $response->json('access_token');
-        });
-    }
+        return $response->json('access_token');
+    });
+}
 
     protected function client()
     {
